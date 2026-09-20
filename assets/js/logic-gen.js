@@ -70,28 +70,77 @@
     }
   }
 
-  /* Cover minterms with primes: essentials first, then greedy. */
+  /* Cover minterms with primes: essentials first, then an exact minimum
+     branch-and-bound cover of the remainder (greedy fallback on big cases). */
   function coverSOP(primes, on) {
-    const need = new Set(on);
     const chosen = [];
     for (const m of on) {
       const ps = primes.filter(p => p.cov.has(m));
       if (ps.length === 1 && !chosen.includes(ps[0])) chosen.push(ps[0]);
     }
-    chosen.forEach(p => p.cov.forEach(m => need.delete(m)));
-    while (need.size) {
-      let best = null, bestCnt = 0;
-      for (const p of primes) {
-        if (chosen.includes(p)) continue;
-        let c = 0;
-        for (const m of need) if (p.cov.has(m)) c++;
-        if (c > bestCnt) { bestCnt = c; best = p; }
-      }
-      if (!best) break;
-      chosen.push(best);
-      best.cov.forEach(m => need.delete(m));
+    const need0 = new Set(on);
+    chosen.forEach(p => p.cov.forEach(m => need0.delete(m)));
+    if (!need0.size) return chosen;
+
+    const remMinterms = [...need0];
+    const seen = new Set();
+    const remPrimes = [];
+    for (const p of primes) {
+      if (chosen.includes(p)) continue;
+      const key = p.t.join(',');
+      if (seen.has(key)) continue;
+      let any = false;
+      for (const m of need0) if (p.cov.has(m)) { any = true; break; }
+      if (any) { seen.add(key); remPrimes.push(p); }
     }
-    return chosen;
+
+    let best = null;
+    let budget = 40000;
+    const search = (picked, covered) => {
+      if (best && picked.length >= best.length) return;
+      if (covered.size === remMinterms.length) { best = picked.slice(); return; }
+      if (--budget <= 0) return;
+      /* branch on the uncovered minterm with the fewest covering primes */
+      let cands = null;
+      for (const m of remMinterms) {
+        if (covered.has(m)) continue;
+        const cs = remPrimes.filter(p => !picked.includes(p) && p.cov.has(m));
+        if (!cands || cs.length < cands.length) {
+          cands = cs;
+          if (cs.length === 1) break;
+        }
+      }
+      if (!cands || !cands.length) return;
+      for (const p of cands) {
+        picked.push(p);
+        const added = [];
+        p.cov.forEach(m => { if (need0.has(m) && !covered.has(m)) { covered.add(m); added.push(m); } });
+        search(picked, covered);
+        added.forEach(m => covered.delete(m));
+        picked.pop();
+        if (budget <= 0) return;
+      }
+    };
+    search([], new Set());
+
+    if (!best) {
+      /* budget exhausted: greedy fallback */
+      const need = new Set(remMinterms);
+      best = [];
+      while (need.size) {
+        let bp = null, bc = 0;
+        for (const p of remPrimes) {
+          if (best.includes(p)) continue;
+          let c = 0;
+          for (const m of need) if (p.cov.has(m)) c++;
+          if (c > bc) { bc = c; bp = p; }
+        }
+        if (!bp) break;
+        best.push(bp);
+        bp.cov.forEach(m => need.delete(m));
+      }
+    }
+    return chosen.concat(best);
   }
 
   /* Algebraic normal form (XOR-of-ANDs). Returns coefficient array
@@ -702,13 +751,28 @@
       if (nd.type === 'CONST0' || nd.type === 'CONST1') return { x: p.x + p.w, y: p.y };
       if (g.mux) {
         const nSel = muxSelCount(nd);
-        if (i < nSel) return selPin(id, nSel - 1 - i);
+        if (i < nSel) {
+          const q = selPin(id, nSel - 1 - i);
+          /* select pins sit on the bottom edge: wires must approach from
+             below so the horizontal tap never overlaps the trapezoid edge */
+          q.below = 16;
+          q.edge = p.x;
+          return q;
+        }
         const ys = pinYs(nd.type, nd.ins.length - nSel);
-        return { x: p.x, y: p.y + ys[i - nSel] };
+        return { x: p.x, y: f(p.y + ys[i - nSel]) };
       }
       const ys = pinYs(nd.type, nd.ins.length);
-      const px = isOrType(nd.type) ? p.x + (GATE[nd.type].xorCurve ? 10 : 0) : p.x;
-      return { x: px, y: p.y + ys[i] };
+      let px = p.x;
+      if (isOrType(nd.type)) {
+        /* land exactly on the concave back arc x = xb + 2t(1-t)*0.34bw */
+        const t = 0.5 - ys[i] / p.h;
+        px = p.x + (g.xorCurve ? 10 : 0) + 2 * t * (1 - t) * 0.34 * g.w;
+      }
+      /* snap to the rendered 0.1 grid — the router's 0.4px clearances are
+         checked against these values but the SVG only shows the rounded
+         ones, and a 0.41px gap rounds down to a touching pair */
+      return { x: f(px), y: f(p.y + ys[i]) };
     }
     function selPin(id, which) {
       const p = pos.get(id), nd = nodes[id];
@@ -716,8 +780,8 @@
       const y = p.y + p.h / 2;
       if (nSel === 1) return { x: p.x + p.w / 2, y };
       return which === 0
-        ? { x: p.x + p.w * 0.32, y }
-        : { x: p.x + p.w * 0.68, y };
+        ? { x: f(p.x + p.w * 0.32), y }
+        : { x: f(p.x + p.w * 0.68), y };
     }
     function outPin(id) {
       const p = pos.get(id), nd = nodes[id];
@@ -771,20 +835,361 @@
       let lane = 0;
       list.forEach(it => { laneOf.set(it.src, lane); lane++; });
     });
-    /* gate bodies a horizontal wire at y must not cross */
-    const blockers = (y, x1, x2) => {
+    /* obstructions for a horizontal run at y between x1..x2: gate bodies,
+       plus foreign pin points (a wire passing exactly through another net's
+       pin would read as a short). skip = dst ids of the net being routed;
+       allowDst exempts the destination gate itself — OR-family input pins
+       sit on the concave back arc inside the bounding box, so the final
+       approach row legitimately enters the box and ends exactly on the arc. */
+    const pinPts = edges.map(e => ({ x: e.pin.x, y: e.pin.y, dst: e.dst }));
+    const hBlockers = (y, x1, x2, skip, allowDst) => {
       const rs = [];
       ids.forEach(id => {
         const p = pos.get(id), nd = nodes[id];
         if (!p || nd.type === 'IN') return;
+        if (allowDst && allowDst.has(id)) return;
         const gy1 = p.y - p.h / 2, gy2 = p.y + p.h / 2;
-        if (y > gy1 + 2 && y < gy2 - 2 && p.x + p.w > x1 + 4 && p.x < x2 - 4) {
-          rs.push([p.x, gy1, p.x + p.w, gy2]);
+        if ((y > gy1 + 2 && y < gy2 - 2 || Math.abs(y - gy1) < 0.5 || Math.abs(y - gy2) < 0.5)
+          && p.x + p.w > x1 + 4 && p.x < x2 - 4) {
+          rs.push([p.x - 8, gy1 - 12]);
         }
       });
+      if (skip) {
+        for (let k = 0; k < pinPts.length; k++) {
+          const q = pinPts[k];
+          if (skip.has(q.dst)) continue;
+          if (Math.abs(q.y - y) < 0.5 && q.x > x1 + 6 && q.x < x2 - 16) {
+            rs.push([q.x - 8, y - 12]);
+          }
+        }
+      }
       return rs;
     };
-    const wires = [];
+    /* horizontal / vertical corridors already routed (per net, for
+       de-confliction) */
+    const usedH = [];
+    const usedV = [];
+    let curSrc = null;
+    const registerWire = (src, d) => {
+      const toks = d.split(' ');
+      let x = parseFloat(toks[1]), y = parseFloat(toks[2]);
+      for (let i = 3; i + 1 < toks.length; i += 2) {
+        const v = parseFloat(toks[i + 1]);
+        if (toks[i] === 'H') {
+          usedH.push({ src, y, x1: Math.min(x, v), x2: Math.max(x, v) });
+          x = v;
+        } else {
+          usedV.push({ src, x, y1: Math.min(y, v), y2: Math.max(y, v) });
+          y = v;
+        }
+      }
+    };
+    /* vertical at x between y1..y2 must not cross a gate body */
+    const vCleanG = (vx, y1, y2, allowDst) => {
+      const lo = Math.min(y1, y2), hi = Math.max(y1, y2);
+      for (let i = 0; i < ids.length; i++) {
+        const id = ids[i], p = pos.get(id), nd = nodes[id];
+        if (!p || nd.type === 'IN') continue;
+        if (allowDst && allowDst.has(id)) continue;
+        if (vx > p.x - 0.4 && vx < p.x + p.w + 0.4) {
+          const o = Math.min(hi, p.y + p.h / 2 - 2) - Math.max(lo, p.y - p.h / 2 + 2);
+          if (o > 1) return false;
+        }
+      }
+      return true;
+    };
+    /* a clean vertical also stays clear of other nets' verticals (wires
+       merging into a parallel run read as a short) and of foreign pin
+       points passed through the interior of the span */
+    const vClean2 = (vx, y1, y2, allowDst, skip) => {
+      if (!vCleanG(vx, y1, y2, allowDst)) return false;
+      const lo = Math.min(y1, y2), hi = Math.max(y1, y2);
+      for (let i = 0; i < usedV.length; i++) {
+        const u = usedV[i];
+        if (u.src === curSrc) continue;
+        if (Math.abs(u.x - vx) < 1.5 && Math.min(hi, u.y2) - Math.max(lo, u.y1) > 1) return false;
+      }
+      for (let k = 0; k < pinPts.length; k++) {
+        const q = pinPts[k];
+        if (skip && skip.has(q.dst)) continue;
+        if (Math.abs(q.x - vx) < 0.5 && q.y > lo + 0.5 && q.y < hi - 0.5) return false;
+      }
+      return true;
+    };
+    /* if x sits inside another net's vertical zone across part of y1..y2,
+       return the x to shift to in order to leave a 1.5px gap (dir = which
+       side to go); null when the position is already clean */
+    const vZone = (x, y1, y2, dir) => {
+      const lo = Math.min(y1, y2), hi = Math.max(y1, y2);
+      for (let i = 0; i < usedV.length; i++) {
+        const u = usedV[i];
+        if (u.src === curSrc) continue;
+        if (Math.abs(u.x - x) < 1.5 && Math.min(hi, u.y2) - Math.max(lo, u.y1) > 1)
+          return dir > 0 ? u.x + 1.5 : u.x - 1.5;
+      }
+      return null;
+    };
+    /* lane-scan fallback: when 9px-staggered lanes are exhausted in a crowded
+       column, hunt for any clean slot at 3px, then 1.5px, granularity — a
+       cramped corridor still fits many more verticals, just closer together;
+       without this the riser clamps onto the pin x and slices through the
+       whole destination column */
+    const fineSlot = (x0, x1, chk) => {
+      for (let x = x0; x <= x1; x += 3) if (chk(x)) return x;
+      for (let x = x0 + 1.5; x <= x1; x += 3) if (chk(x)) return x;
+      return -1;
+    };
+    /* planting a new corner on another net's endpoint — or on a foreign
+       pin point — would read as a short; keep 0.4px away from all of them */
+    const epTaken = (x, y, skip) => {
+      for (let i = 0; i < usedH.length; i++) {
+        const u = usedH[i];
+        if (u.src === curSrc) continue;
+        if (Math.abs(u.y - y) < 0.4 && (Math.abs(u.x1 - x) < 0.4 || Math.abs(u.x2 - x) < 0.4)) return true;
+      }
+      for (let i = 0; i < usedV.length; i++) {
+        const u = usedV[i];
+        if (u.src === curSrc) continue;
+        if (Math.abs(u.x - x) < 0.4 && (Math.abs(u.y1 - y) < 0.4 || Math.abs(u.y2 - y) < 0.4)) return true;
+      }
+      for (let k = 0; k < pinPts.length; k++) {
+        const q = pinPts[k];
+        if (skip && skip.has(q.dst)) continue;
+        if (Math.abs(q.x - x) < 0.4 && Math.abs(q.y - y) < 0.4) return true;
+      }
+      return false;
+    };
+    /* a corridor row is usable when no other net's horizontal runs within
+       3px of it across the span and no gate body / foreign pin blocks it */
+    const rowFree = (src, y, x1, x2, skip, allowDst) => {
+      if (y < 8 || y > height - 8) return false;
+      for (let i = 0; i < usedH.length; i++) {
+        const u = usedH[i];
+        if (u.src === src) continue;
+        if (Math.abs(u.y - y) < 3 && Math.min(u.x2, x2) - Math.max(u.x1, x1) > 1) return false;
+      }
+      return !hBlockers(y, x1, x2, skip, allowDst).length;
+    };
+    /* straight horizontal continuation; detour only when truly obstructed.
+       dropX caps where the detour drops back so it can be kept clear of a
+       target gate's left edge (used by below-approach pins). Detour corridors
+       are staggered per lane, and a leg never runs within 3px of another
+       net's corridor (that would read as a short). */
+    const hRun = (x1, y, x2, skip, dropX, lane, allowDst) => {
+      if (x2 - x1 < 0.5) return '';
+      let legs = [{ x1, y, x2 }];
+      const vClean = (vx, y1, y2) => vClean2(vx, y1, y2, allowDst, skip);
+      const conflictAt = (yy, a, b, skipIdx) => {
+        for (let i = 0; i < usedH.length; i++) {
+          if (skipIdx && skipIdx.has(i)) continue;
+          const u = usedH[i];
+          if (u.src === curSrc) continue;
+          if (Math.abs(u.y - yy) < 3) {
+            const lo = Math.max(u.x1, a), hi = Math.min(u.x2, b);
+            if (hi - lo > 1) return { u, lo, hi, i };
+          }
+        }
+        return null;
+      };
+      const insideBody = (fx, fy) => {
+        let hit = null;
+        ids.forEach(id => {
+          if (hit) return;
+          const p = pos.get(id), nd = nodes[id];
+          if (!p || nd.type === 'IN') return;
+          if (allowDst && allowDst.has(id)) return;
+          if (fx > p.x + 1 && fx < p.x + p.w - 1 && fy > p.y - p.h / 2 + 1 && fy < p.y + p.h / 2 - 1) hit = id;
+        });
+        return hit;
+      };
+      const deconflict = () => {
+        for (let k = 0; k < legs.length; k++) {
+          const L = legs[k];
+          if (L.via != null) continue;
+          /* try every conflicting corridor in turn — the first one found may
+             be undodgeable within its window while a later one is fixable */
+          const tried = new Set();
+          let repl = null;
+          for (;;) {
+            const c = conflictAt(L.y, L.x1, L.x2, tried);
+            if (!c) break;
+            tried.add(c.i);
+            /* grow the dodge window when every row inside the tight one is
+               rejected — three nets' stubs can overlap pairwise within ±6px
+               yet a ±14/±22px span still has clean rows beyond them */
+            let alt = null, useL = 0, useR = 0;
+            const sgn = L.y - c.u.y > 0 ? 1 : -1;
+            const steps = [8, -8, 16, -16, 24, -24, 32, -32, 4, -4, 12, -12, 20, -20, 28, -28];
+            for (let grow = 6; grow <= 30 && alt == null; grow += 8) {
+              const left = Math.max(L.x1, c.lo - grow), right = Math.min(L.x2, c.hi + grow);
+              if (right - left < 3) continue;
+              for (let q = 0; q < steps.length && alt == null; q++) {
+                const ay = L.y + steps[q] * sgn;
+                if (ay < 8 || ay > height - 8) continue;
+                if (hBlockers(ay, left, right, skip, allowDst).length) continue;
+                if (conflictAt(ay, left, right)) continue;
+                /* pull both jog foot points (and their verticals) out of any
+                   gate body or parallel vertical zone; the residual collinear
+                   stretch must stay ≤ 1px */
+                let l = left, r = right, guard = 0;
+                while (guard++ < 10) {
+                  const gl = insideBody(l, L.y), gr = insideBody(r, L.y);
+                  if (gl) l = pos.get(gl).x + pos.get(gl).w + 2;
+                  if (gr) r = pos.get(gr).x - 2;
+                  const zl = gl ? null : vZone(l, L.y, ay, +1);
+                  const zr = gr ? null : vZone(r, L.y, ay, -1);
+                  if (zl != null) l = zl;
+                  if (zr != null) r = zr;
+                  if (!gl && !gr && zl == null && zr == null) break;
+                }
+                /* a stub leg (e.g. a corridor's tail) can be only a few px
+                   wide — its window is capped by the leg itself, so the
+                   foot separation floor must scale down too, else the only
+                   possible dodge is rejected as 'short' */
+                if (r - l < Math.min(6, L.x2 - L.x1)) continue;
+                const preOv = Math.min(l, c.hi) - Math.max(L.x1, c.lo);
+                const retOv = Math.min(L.x2, c.hi) - Math.max(r, c.lo);
+                if (preOv > 1 || retOv > 1) continue;
+                if (!vClean(l, L.y, ay) || !vClean(r, L.y, ay)) continue;
+                if (epTaken(l, L.y, skip) || epTaken(r, L.y, skip) || epTaken(l, ay, skip) || epTaken(r, ay, skip)) continue;
+                alt = ay; useL = l; useR = r;
+              }
+            }
+            if (alt == null) continue;
+            repl = [];
+            if (useL - L.x1 > 2) repl.push({ x1: L.x1, y: L.y, x2: useL });
+            repl.push({ x1: useL, y: L.y, x2: useR, via: alt });
+            if (L.x2 - useR > 0.5) repl.push({ x1: useR, y: L.y, x2: L.x2 });
+            break;
+          }
+          if (repl) {
+            legs.splice(k, 1, ...repl);
+            k += repl.length - 1;
+          }
+        }
+      };
+      const applyBlockers = () => {
+        for (let k = 0; k < legs.length; k++) {
+          const L = legs[k];
+          if (L.via != null) continue;
+          const rs = hBlockers(L.y, L.x1, L.x2, skip, allowDst);
+          if (!rs.length) continue;
+          const riseX = Math.max(L.x1, Math.min.apply(null, rs.map(r => r[0])) - lane * 9);
+          const dy0 = Math.max(8, Math.min.apply(null, rs.map(r => r[1])) - lane * 9);
+          let drX = Math.min(L.x2 - 14, dropX == null ? Infinity : dropX) - lane * 9;
+          /* the corridor must cover every gate blocking this row — a drop
+             x inside a blocker's span leaves the return leg slicing through
+             the gate body (e.g. leg 240..340 blocked by gate 266..326 with
+             drX=308 ends up re-entering the body from 308 to 326) */
+          const bg = [];
+          ids.forEach(id => {
+            const p = pos.get(id), nd = nodes[id];
+            if (!p || nd.type === 'IN') return;
+            if (allowDst && allowDst.has(id)) return;
+            const gy1 = p.y - p.h / 2, gy2 = p.y + p.h / 2;
+            if ((L.y > gy1 + 2 && L.y < gy2 - 2 || Math.abs(L.y - gy1) < 0.5 || Math.abs(L.y - gy2) < 0.5)
+              && p.x + p.w > L.x1 + 4 && p.x < L.x2 - 4) bg.push(p);
+          });
+          if (bg.length) {
+            const gR = Math.max.apply(null, bg.map(p => p.x + p.w));
+            if (drX < gR + 4) drX = gR + 4;
+            if (drX > L.x2 - 0.5) drX = L.x2;
+          }
+          if (drX < riseX) drX = riseX;
+          if (drX - riseX < 3) continue; /* no room for a corridor here */
+          /* corridor rows must stay visually clear of every gate bbox —
+             hBlockers' ±2 band-edge tolerance admits rows 2px inside the
+             edge, which still reads as running through the gate */
+          const bodyStrict = (yy, rx, dr) => {
+            for (let i = 0; i < ids.length; i++) {
+              const id = ids[i], p = pos.get(id), nd = nodes[id];
+              if (!p || nd.type === 'IN') continue;
+              if (allowDst && allowDst.has(id)) continue;
+              if (Math.min(p.x + p.w, dr) - Math.max(p.x, rx) > 2
+                && yy > p.y - p.h / 2 - 0.6 && yy < p.y + p.h / 2 + 0.6) return true;
+            }
+            return false;
+          };
+          /* find a corridor row near dy0 for a given (rx, dr) pair, scanning
+             both directions — a one-sided upward scan dead-ends when the row
+             just above the gate is taken by another net's corridor even
+             though rows further up or below the wire are free; the row must
+             clear bodies, pins, other nets' corridors and endpoints, and
+             both detour verticals must be clean */
+          const scanDy = (rx, dr) => {
+            const dySeen = new Set();
+            for (let st = 0; st <= 64; st += 8) {
+              const sgns = st === 0 ? [1] : [1, -1];
+              for (let q = 0; q < sgns.length; q++) {
+                const cand = dy0 + st * sgns[q];
+                if (cand < 8 || cand > height - 8 || dySeen.has(cand)) continue;
+                dySeen.add(cand);
+                let why = null;
+                if (bodyStrict(cand, rx, dr)) why = 'bodyStrict';
+                else if (hBlockers(cand, rx, dr, skip, allowDst).length) why = 'hBlockers';
+                else if (conflictAt(cand, rx, dr)) why = 'conflictAt';
+                else if (!vClean(rx, L.y, cand)) why = 'vCleanRise';
+                else if (!vClean(dr, L.y, cand)) why = 'vCleanDrop';
+                else if (epTaken(rx, L.y, skip)) why = 'epRiseY';
+                else if (epTaken(dr, L.y, skip)) why = 'epDropY';
+                else if (epTaken(rx, cand, skip)) why = 'epRiseC';
+                else if (epTaken(dr, cand, skip)) why = 'epDropC';
+                if (why) continue;
+                return cand;
+              }
+            }
+            /* fine outward fallback — stacked gates can leave a free window
+               only a few px tall (e.g. bands 30..130 and 152..252 leave
+               131..151) that the ±8 stride never hits; scan every row */
+            const ok = (yy) => !(bodyStrict(yy, rx, dr)
+              || hBlockers(yy, rx, dr, skip, allowDst).length
+              || conflictAt(yy, rx, dr)
+              || !vClean(rx, L.y, yy) || !vClean(dr, L.y, yy)
+              || epTaken(rx, L.y, skip) || epTaken(dr, L.y, skip)
+              || epTaken(rx, yy, skip) || epTaken(dr, yy, skip));
+            for (let d = 0; d <= height; d++) {
+              const up = dy0 + d, dn = dy0 - d;
+              if (up <= height - 8 && ok(up)) return up;
+              if (dn >= 8 && dn !== up && ok(dn)) return dn;
+            }
+            return -1;
+          };
+          let rx = riseX, dr = drX;
+          let dy = scanDy(rx, dr);
+          if (dy < 0) {
+            /* the canonical riser/drop columns can be walled for every row
+               by another net's long vertical sharing the same channel; nudge
+               either column to a neighbour x and re-scan */
+            const tries = [];
+            for (const d of [0, -3, 3, -6, 6, -9, 9, -12, 12, -15, 15]) tries.push([riseX + d, drX]);
+            for (const d of [3, -3, 6, -6, 9, -9, 12, -12]) tries.push([riseX, drX + d]);
+            for (const dl of [-3, 3, -6, 6]) for (const ddr of [3, -3, 6, -6])
+              tries.push([riseX + dl, drX + ddr]);
+            for (let ti = 0; ti < tries.length && dy < 0; ti++) {
+              const rx2 = tries[ti][0], dr2 = tries[ti][1];
+              if (rx2 < L.x1 + 2 || dr2 > L.x2 || dr2 - rx2 < 6) continue;
+              const got = scanDy(rx2, dr2);
+              if (got >= 0) { rx = rx2; dr = dr2; dy = got; }
+            }
+          }
+          if (dy < 0) continue;
+          const repl = [];
+          if (rx - L.x1 > 2) repl.push({ x1: L.x1, y: L.y, x2: rx });
+          repl.push({ x1: rx, y: L.y, x2: dr, via: dy });
+          if (L.x2 - dr > 0.5) repl.push({ x1: dr, y: L.y, x2: L.x2 });
+          legs.splice(k, 1, ...repl);
+          k += repl.length - 1;
+        }
+      };
+      deconflict();
+      applyBlockers();
+      deconflict();
+      applyBlockers();
+      return legs.map(L => L.via == null
+        ? 'H ' + f(L.x2)
+        : 'V ' + f(L.via) + ' H ' + f(L.x2) + ' V ' + f(L.y)).join(' ');
+    };
+    const wires = []; // {src, d}
     const dots = [];
     const dotKeys = new Set();
     const addDot = (x, y) => {
@@ -793,51 +1198,214 @@
       dotKeys.add(k);
       dots.push([x, y]);
     };
+    /* join path fragments, dropping empties so no dangling/blank commands
+       ever reach the SVG path parser */
+    const dstr = (...parts) => parts.filter(p => p && p.trim()).join(' ');
+    const pushWire = (src, d) => { wires.push({ src, d }); registerWire(src, d); };
     bySrc.forEach((list, src) => {
+      curSrc = src;
       const s = outPin(src);
       if (!s) return;
       const lane = laneOf.get(src) || 0;
-      const ts = list.map(e => e.pin).filter(Boolean).sort((a, b) => a.y - b.y || a.x - b.x);
+      const ts = list.map(e => ({ pin: e.pin, dst: e.dst })).filter(e => e.pin)
+        .map(e => ({ x: e.pin.x, y: e.pin.y, below: e.pin.below || 0, edge: e.pin.edge, dst: e.dst }))
+        .sort((a, b) => (a.y + a.below) - (b.y + b.below) || a.x - b.x);
       if (!ts.length) return;
+      const skip = new Set(list.map(e => e.dst));
+      const cap = t => (t.below ? t.edge - 8 : null);
       if (ts.length === 1) {
         const t = ts[0];
-        if (Math.abs(s.y - t.y) < 0.6) {
-          const rs = blockers(s.y, s.x, t.x);
-          if (!rs.length) {
-            wires.push('M ' + f(s.x) + ' ' + f(s.y) + ' H ' + f(t.x));
-          } else {
-            /* detour above the blocking gate bodies, drop back near the pin */
-            const bx1 = Math.min.apply(null, rs.map(r => r[0])) - 8;
-            const dy = Math.min.apply(null, rs.map(r => r[1])) - 12;
-            wires.push('M ' + f(s.x) + ' ' + f(s.y) + ' H ' + f(bx1)
-              + ' V ' + f(dy) + ' H ' + f(t.x - 14)
-              + ' V ' + f(t.y) + ' H ' + f(t.x));
-          }
+        const ad = new Set([t.dst]);
+        const jy = t.y + t.below;
+        if (Math.abs(s.y - jy) < 0.25 && rowFree(src, jy, s.x, t.x, skip, ad)) {
+          pushWire(src, dstr('M ' + f(s.x) + ' ' + f(s.y), hRun(s.x, s.y, t.x, skip, cap(t), lane, ad),
+            (t.below ? 'V ' + f(t.y) : '')));
         } else {
-          const mx = f(s.x + 10 + lane * 8);
-          wires.push('M ' + f(s.x) + ' ' + f(s.y) + ' H ' + mx + ' V ' + f(t.y) + ' H ' + f(t.x));
+          /* the approach vertical must not slice through a gate body
+             (e.g. an XNOR bounding box extends past its output pin), run
+             parallel-close to another net's vertical, or pass through a
+             foreign pin — step it right until clean; lane overflow in a
+             crowded column can push mx past the pin, so clamp it back */
+          let mx = s.x + 18 + lane * 9;
+          const mxOk = x => vClean2(x, s.y, jy, ad, skip)
+            && !epTaken(x, jy, skip) && !epTaken(x, s.y, skip);
+          while (mx < t.x - 12 && !mxOk(mx)) mx += 9;
+          if (mx > t.x - 12 || !mxOk(mx)) {
+            const slot = fineSlot(s.x + 18, t.x - 12, mxOk);
+            if (slot >= 0) mx = slot;
+          }
+          if (mx > t.x) mx = t.x;
+          /* pick the corridor row: the pin's own approach row when it is
+             clean, otherwise the nearest clean row; a final V t.y then
+             guarantees the wire lands exactly on the pin */
+          let Y = null;
+          const offs = [0, 4, -4, 8, -8, 12, -12, 16, -16, 20, -20, 24, -24, 28, -28, 32, -32];
+          for (let k = 0; k < offs.length; k++) {
+            const ay = jy + offs[k];
+            if (ay < 8 || ay > height - 8) continue;
+            if (epTaken(mx, ay, skip)) continue;
+            if (!vClean2(mx, s.y, ay, ad, skip)) continue;
+            if (Math.abs(ay - t.y) > 0.05 && !vClean2(mx, ay, t.y, ad, skip)) continue;
+            if (!rowFree(src, ay, mx, t.x, skip, ad)) continue;
+            if (Math.abs(ay - t.y) > 0.05 && !vClean2(t.x, ay, t.y, ad, skip)) continue;
+            Y = ay; break;
+          }
+          if (Y == null) Y = jy;
+          const base = dstr('M ' + f(s.x) + ' ' + f(s.y),
+            hRun(s.x, s.y, mx, skip, null, lane, ad),
+            Math.abs(Y - s.y) > 0.05 ? 'V ' + f(Y) : '');
+          /* left-edge pins need a horizontal landing at the pin row: a final
+             vertical drop at t.x would hug the gate's edge, or slice through
+             an OR-family bounding box; bottom-edge (below) pins keep the
+             vertical landing, which meets the edge cleanly from underneath */
+          if (Math.abs(Y - t.y) > 0.05 && !t.below) {
+            let xr = null;
+            const p = pos.get(t.dst);
+            const tp = nodes[t.dst].type;
+            const fam = tp === 'OR' || tp === 'NOR' || tp === 'XOR' || tp === 'XNOR';
+            /* fine descending scan — the shortest clean stub wins; a strided
+               grid misses valid slots, e.g. when a corridor row ends just
+               off the pin row so exactly one landing x keeps clearance from
+               both that row's end and the next net's corner */
+            for (let cx = Math.round((t.x - 4) * 2) / 2; cx >= mx + 2; cx -= 1) {
+              if (fam && p && cx > p.x - 1.5) continue;
+              if (!vClean2(cx, Y, t.y, ad, skip)) continue;
+              if (hBlockers(t.y, cx, t.x, skip, ad).length) continue;
+              if (epTaken(cx, Y, skip)) continue;
+              if (epTaken(cx, t.y, skip)) continue;
+              let bad = false;
+              for (let i = 0; i < usedH.length && !bad; i++) {
+                const u = usedH[i];
+                if (u.src === src) continue;
+                if (Math.abs(u.y - t.y) < 3 && Math.min(u.x2, t.x) - Math.max(u.x1, cx) > 1) bad = true;
+              }
+              if (bad) continue;
+              xr = cx; break;
+            }
+            if (xr != null) {
+              pushWire(src, dstr(base, hRun(mx, Y, xr, skip, null, lane, ad),
+                'V ' + f(t.y), 'H ' + f(t.x)));
+            } else {
+              pushWire(src, dstr(base, hRun(mx, Y, t.x, skip, cap(t), lane, ad),
+                'V ' + f(t.y)));
+            }
+          } else {
+            pushWire(src, dstr(base, hRun(mx, Y, t.x, skip, cap(t), lane, ad),
+              Math.abs(Y - t.y) > 0.05 ? 'V ' + f(t.y) : ''));
+          }
         }
       } else {
-        const trunkX = s.x + 14 + lane * 9;
-        const yMin = Math.min(s.y, ts[0].y), yMax = Math.max(s.y, ts[ts.length - 1].y);
-        const flat = Math.abs(yMax - yMin) < 0.6;
-        wires.push('M ' + f(s.x) + ' ' + f(s.y) + ' H ' + f(trunkX) + ' V ' + f(yMin) + ' V ' + f(yMax));
-        ts.forEach(t => {
-          const rs = blockers(t.y, trunkX, t.x);
-          if (rs.length) {
-            const bx1 = Math.min.apply(null, rs.map(r => r[0])) - 8;
-            const dy = Math.min.apply(null, rs.map(r => r[1])) - 12;
-            wires.push('M ' + f(trunkX) + ' ' + f(t.y) + ' H ' + f(bx1)
-              + ' V ' + f(dy) + ' H ' + f(t.x - 14)
-              + ' V ' + f(t.y) + ' H ' + f(t.x));
-          } else {
-            wires.push('M ' + f(trunkX) + ' ' + f(t.y) + ' H ' + f(t.x));
-          }
-          if (!flat) addDot(trunkX, t.y);
+        const jys = ts.map(t => t.y + t.below);
+        const yMin = Math.min(s.y, Math.min.apply(null, jys));
+        const yMax = Math.max(s.y, Math.max.apply(null, jys));
+        let trunkX = s.x + 18 + lane * 9;
+        const minTx = Math.min.apply(null, ts.map(t => t.x));
+        const trOk = x => vClean2(x, yMin, yMax, null, skip)
+          && !epTaken(x, yMin, skip) && !epTaken(x, yMax, skip) && !epTaken(x, s.y, skip);
+        while (trunkX < minTx - 12 && !trOk(trunkX)) trunkX += 9;
+        if (trunkX > minTx - 12 || !trOk(trunkX)) {
+          const slot = fineSlot(s.x + 18, minTx - 12, trOk);
+          if (slot >= 0) trunkX = slot;
+        }
+        if (trunkX > minTx) trunkX = minTx;
+        pushWire(src, dstr('M ' + f(s.x) + ' ' + f(s.y),
+          hRun(s.x, s.y, trunkX, skip, null, lane, null),
+          'V ' + f(yMin), 'V ' + f(yMax)));
+        ts.forEach((t, k) => {
+          const jy = jys[k];
+          const hr = hRun(trunkX, jy, t.x, skip, cap(t), lane, new Set([t.dst]));
+          /* a fully clamped trunk can sit exactly on the tap pin's x, leaving
+             no horizontal to route — the trunk vertical already passes through
+             the tap point, so an M-only path would be a dangling stub */
+          if (!hr && !t.below) return;
+          pushWire(src, dstr('M ' + f(trunkX) + ' ' + f(jy), hr,
+            (t.below ? 'V ' + f(t.y) : '')));
         });
       }
     });
-    if (wires.length) svg.push('<path class="gl" d="' + wires.join(' ') + '"/>');
+    curSrc = null;
+
+    /* junction dots: parse routed wires into segments, merge collinear
+       overlapping pieces of the same net into maximal corridors, then dot
+       every point where 3+ branches of one net meet (cross, tee, or a pin
+       tapping a through-corridor). Cross-net crossings are never dotted. */
+    (function addJunctionDots() {
+      const EPS = 0.35;
+      const hSegs = [], vSegs = [];
+      wires.forEach(w => {
+        const toks = w.d.split(' ');
+        let x = parseFloat(toks[1]), y = parseFloat(toks[2]);
+        for (let i = 3; i + 1 < toks.length; i += 2) {
+          const v = parseFloat(toks[i + 1]);
+          if (toks[i] === 'H') {
+            hSegs.push({ src: w.src, a: Math.min(x, v), b: Math.max(x, v), c: y });
+            x = v;
+          } else {
+            vSegs.push({ src: w.src, a: Math.min(y, v), b: Math.max(y, v), c: x });
+            y = v;
+          }
+        }
+      });
+      const merge = list => {
+        const byK = new Map();
+        list.forEach(s => {
+          const k = s.src + '|' + (Math.round(s.c * 2) / 2);
+          if (!byK.has(k)) byK.set(k, []);
+          byK.get(k).push(s);
+        });
+        const out = [];
+        byK.forEach(g => {
+          g.sort((p, q) => p.a - q.a);
+          let cur = { src: g[0].src, a: g[0].a, b: g[0].b, c: g[0].c };
+          for (let i = 1; i < g.length; i++) {
+            if (g[i].a - cur.b < 0.6) cur.b = Math.max(cur.b, g[i].b);
+            else { out.push(cur); cur = { src: g[i].src, a: g[i].a, b: g[i].b, c: g[i].c }; }
+          }
+          out.push(cur);
+        });
+        return out;
+      };
+      const mh = merge(hSegs), mv = merge(vSegs);
+      const pts = new Map();
+      const touch = (x, y, n) => {
+        const k = Math.round(x * 4) + ',' + Math.round(y * 4);
+        if (!pts.has(k)) pts.set(k, { x, y, br: 0 });
+        pts.get(k).br += n;
+      };
+      mh.forEach(h => {
+        mv.forEach(v => {
+          if (v.src !== h.src) return;
+          const hEndA = Math.abs(v.c - h.a) < EPS, hEndB = Math.abs(v.c - h.b) < EPS;
+          const vEndA = Math.abs(h.c - v.a) < EPS, vEndB = Math.abs(h.c - v.b) < EPS;
+          if (v.c > h.a + EPS && v.c < h.b - EPS) {
+            if (h.c > v.a + EPS && h.c < v.b - EPS) touch(v.c, h.c, 4);
+            else if (vEndA || vEndB) touch(v.c, h.c, 3);
+          } else if (hEndA || hEndB) {
+            if (h.c > v.a + EPS && h.c < v.b - EPS) touch(v.c, h.c, 3);
+            else {
+              /* attach exactly at the vertical's end = corner (no dot);
+                 a hair past it on a continuing run = tee (dot) */
+              const stub = Math.min(Math.abs(h.c - v.a), Math.abs(h.c - v.b));
+              touch(v.c, h.c, stub > 0.05 ? 3 : 2);
+            }
+          }
+        });
+      });
+      edges.forEach(e => {
+        mh.forEach(h => {
+          if (h.src === e.src && Math.abs(h.c - e.pin.y) < EPS && h.a + EPS < e.pin.x && e.pin.x < h.b - EPS) {
+            touch(e.pin.x, e.pin.y, 3);
+          }
+        });
+        mv.forEach(v => {
+          if (v.src === e.src && Math.abs(v.c - e.pin.x) < EPS && v.a + EPS < e.pin.y && e.pin.y < v.b - EPS) {
+            touch(e.pin.x, e.pin.y, 3);
+          }
+        });
+      });
+      pts.forEach(p => { if (p.br >= 3) addDot(p.x, p.y); });
+    })();
+    if (wires.length) svg.push('<path class="gl" d="' + wires.map(w => w.d).join(' ') + '"/>');
     if (dots.length) svg.push('<g>' + dots.map(d => '<circle class="dot" cx="' + f(d[0]) + '" cy="' + f(d[1]) + '" r="2.6"/>').join('') + '</g>');
 
     /* nodes */
@@ -854,12 +1422,25 @@
       }
     });
 
-    /* output labels */
+    /* output labels: a root with fanout is already spanned by its net wire
+       (terminal circle sits on the initial horizontal), so only roots with
+       no fanout get the 14px stub. Identical output functions hash-cons to
+       one node — draw that terminal once and stack the duplicate labels. */
+    const drawnRoot = new Map();
     roots.forEach(r => {
       const p = pos.get(r.id);
       if (!p) return;
+      const k = drawnRoot.get(r.id) || 0;
+      drawnRoot.set(r.id, k + 1);
+      if (k > 0) {
+        const op2 = outPin(r.id);
+        svg.push('<text x="' + f(op2.x + 24) + '" y="' + f(op2.y + 4 + k * 14) + '" class="olbl">' + esc(r.label) + '</text>');
+        return;
+      }
       const op = outPin(r.id);
-      svg.push('<line class="gl" x1="' + f(op.x) + '" y1="' + f(op.y) + '" x2="' + f(op.x + 14) + '" y2="' + f(op.y) + '"/>');
+      if (!bySrc.has(r.id)) {
+        svg.push('<line class="gl" x1="' + f(op.x) + '" y1="' + f(op.y) + '" x2="' + f(op.x + 14) + '" y2="' + f(op.y) + '"/>');
+      }
       svg.push('<circle class="term" cx="' + f(op.x + 14) + '" cy="' + f(op.y) + '" r="3.2"/>');
       svg.push('<text x="' + f(op.x + 24) + '" y="' + f(op.y + 4) + '" class="olbl">' + esc(r.label) + '</text>');
     });
@@ -931,7 +1512,7 @@
   /* ---------------------------------------------------------- *
    *  Browser UI wiring                                          *
    * ---------------------------------------------------------- */
-  const CORE = { bitsOf, minimizeSOP, coverSOP, anfCoefficients, mergeXorPair, makeBuilder, synthesize };
+  const CORE = { bitsOf, minimizeSOP, coverSOP, anfCoefficients, mergeXorPair, makeBuilder, synthesize, renderSvg };
   if (typeof module !== 'undefined' && module.exports) module.exports = CORE;
   if (typeof window !== 'undefined') window.ICLogic = CORE;
 
