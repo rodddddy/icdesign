@@ -1,0 +1,97 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Combinational Logic Generator — ICDesign Lab</title>
+  <meta name="description" content="Truth table to gate-level circuit generator with gate library constraints: NAND, NOR, AND, OR, XOR, MUX2, MUX4 and more.">
+  <link rel="stylesheet" href="../assets/css/style.css">
+  <link rel="icon" href="data:image/svg+xml,&lt;svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'&gt;&lt;rect x='2' y='2' width='12' height='12' rx='2' fill='%2322d3ee'/&gt;&lt;/svg&gt;">
+</head>
+<body>
+  <header class="topbar">
+    <div class="topbar-inner">
+      <a class="brand" href="../index.html"><span class="chip-dot"></span>ICDesign Lab</a>
+      <nav class="topnav">
+        <a href="../index.html">Tools</a>
+        <a href="https://github.com/rodddddy/icdesign" target="_blank" rel="noopener">GitHub</a>
+      </nav>
+    </div>
+  </header>
+
+  <main class="wrap">
+    <div class="tool-header">
+      <a class="back-link" href="../index.html">&larr; All tools</a>
+      <h1>Combinational Logic Generator</h1>
+      <p>Define input / output signals, fill in a truth table, and get minimized Boolean
+         expressions plus a gate-level schematic. Restrict the gate library to explore
+         different implementation styles.</p>
+    </div>
+
+    <!-- Step 1: signals -->
+    <section class="panel">
+      <h2><span class="step-num">1</span>Signals</h2>
+      <p class="hint">Names must be unique, start with a letter or underscore, and contain only
+         letters, digits and underscores. First input is the most significant bit.
+         Up to <strong>8 inputs</strong> and <strong>8 outputs</strong>.</p>
+      <div class="sig-cols">
+        <div class="sig-col">
+          <h3>Input signals</h3>
+          <div id="in-list"></div>
+          <button class="btn-add" id="add-in" type="button">+ add input</button>
+        </div>
+        <div class="sig-col">
+          <h3>Output signals</h3>
+          <div id="out-list"></div>
+          <button class="btn-add" id="add-out" type="button">+ add output</button>
+        </div>
+      </div>
+    </section>
+
+    <!-- Step 2: gate library -->
+    <section class="panel">
+      <h2><span class="step-num">2</span>Gate library</h2>
+      <p class="hint">The generator will only use the selected gate types. At least one
+         functionally complete set is required (e.g. NAND alone, NOR alone, MUX2 alone,
+         AND+OR+INV, AND+XOR, &hellip;).</p>
+      <div class="gate-chips" id="gate-chips"></div>
+    </section>
+
+    <!-- Step 3: truth table -->
+    <section class="panel">
+      <h2><span class="step-num">3</span>Truth table</h2>
+      <p class="hint">Rows are generated automatically from all-0s to all-1s. Enter each output
+         value as <code>0</code> or <code>1</code> &mdash; an empty cell defaults to <code>0</code>.</p>
+      <p class="hint" id="tt-hint"></p>
+      <div id="tt-container"></div>
+    </section>
+
+    <div class="generate-bar">
+      <button class="btn-primary" id="generate" type="button">Generate</button>
+      <span class="tt-meta" id="generate-msg"></span>
+    </div>
+
+    <div id="error-container"></div>
+
+    <!-- Results -->
+    <section class="panel" id="result-panel" hidden>
+      <h2><span class="step-num">4</span>Results</h2>
+      <div id="result-container"></div>
+      <hr class="sep">
+      <h2 style="font-size:14px;">Gate-level schematic</h2>
+      <div class="stat-chips" id="global-stats"></div>
+      <div class="circuit-box" id="circuit-box"></div>
+      <div class="circuit-toolbar">
+        <button class="link-btn" id="dl-svg" type="button">Download SVG</button>
+        <span class="tt-meta">Tip: open the SVG in a new tab for a full-resolution view.</span>
+      </div>
+    </section>
+  </main>
+
+  <footer class="site-footer">
+    <div class="wrap">ICDesign Lab — static site deployed on Cloudflare Pages · source on GitHub</div>
+  </footer>
+
+  <script src="../assets/js/logic-gen.js"></script>
+</body>
+</html>

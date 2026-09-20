@@ -1,12 +1,65 @@
 <!DOCTYPE html>
-<html lang="zh-CN">
+<html lang="en">
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>Hello World</title>
+  <title>ICDesign Lab — Online IC Design Tools</title>
+  <meta name="description" content="A collection of free online tools for digital IC design: combinational logic synthesis, truth table to gate-level schematic, and more.">
+  <link rel="stylesheet" href="assets/css/style.css">
+  <link rel="icon" href="data:image/svg+xml,&lt;svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'&gt;&lt;rect x='2' y='2' width='12' height='12' rx='2' fill='%2322d3ee'/&gt;&lt;/svg&gt;">
 </head>
 <body>
-  <h1>Hello World</h1>
-  <p>我的第一个静态网站，由 GitHub 托管代码、Cloudflare Pages 部署。</p>
+  <header class="topbar">
+    <div class="topbar-inner">
+      <a class="brand" href="index.html"><span class="chip-dot"></span>ICDesign Lab</a>
+      <nav class="topnav">
+        <a href="index.html">Tools</a>
+        <a href="https://github.com/rodddddy/icdesign" target="_blank" rel="noopener">GitHub</a>
+      </nav>
+    </div>
+  </header>
+
+  <main class="wrap">
+    <section class="hero">
+      <h1>Build circuits <span class="grad">in your browser</span></h1>
+      <p>A growing collection of free, open-source tools for digital integrated circuit design.
+         No installation, no sign-up — pick a tool and start designing.</p>
+    </section>
+
+    <h2 class="section-title">Tools</h2>
+    <div class="tools-grid">
+      <a class="tool-card" href="tools/combinational-logic.html">
+        <div class="tool-icon">
+          <svg viewBox="0 0 24 24">
+            <path d="M4 6 h5 a3 3 0 0 1 0 6 h-5 z"/>
+            <path d="M13 13 l4 -2.5 v5 z"/>
+            <path d="M4 9 h-2 M11 9 h2 M17 13 h2 M17 15.5 h2"/>
+            <circle cx="20.6" cy="13.8" r="0.4"/>
+          </svg>
+        </div>
+        <h3>Combinational Logic Generator</h3>
+        <p>Enter a truth table, get minimized Boolean expressions and a gate-level schematic.
+           Constrain the mapper to NAND / NOR / MUX / XOR and more.</p>
+        <span class="tool-tag">Logic Synthesis</span>
+      </a>
+
+      <div class="tool-card disabled">
+        <div class="tool-icon">
+          <svg viewBox="0 0 24 24">
+            <rect x="4" y="4" width="16" height="16" rx="2"/>
+            <path d="M9 12 h6 M12 9 v6"/>
+          </svg>
+        </div>
+        <h3>More tools coming soon</h3>
+        <p>Sequential logic, K-map visualizer, timing diagram editor and other utilities
+           are on the roadmap.</p>
+        <span class="tool-tag">Roadmap</span>
+      </div>
+    </div>
+  </main>
+
+  <footer class="site-footer">
+    <div class="wrap">ICDesign Lab — static site deployed on Cloudflare Pages · source on GitHub</div>
+  </footer>
 </body>
 </html>
