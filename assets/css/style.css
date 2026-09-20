@@ -13,6 +13,10 @@
   --danger: #f87171;
   --danger-soft: rgba(248, 113, 113, 0.1);
   --ok: #34d399;
+  --sg-wire: #93a5c0;
+  --sg-gate: #dbe4f0;
+  --sg-label: var(--muted);
+  --sg-out: var(--violet);
   --mono: ui-monospace, "Cascadia Code", "JetBrains Mono", Consolas, "Courier New", monospace;
   --sans: system-ui, -apple-system, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
 }
@@ -192,14 +196,14 @@ table.tt thead th.out-col { color: var(--violet); }
 table.tt tbody tr:nth-child(even) { background: rgba(139, 155, 180, 0.03); }
 table.tt td.in-bit { color: var(--muted); }
 table.tt td.out-cell { padding: 3px 8px; }
-table.tt td.out-cell input {
-  width: 44px; text-align: center; background: transparent; border: 1px solid transparent;
-  border-radius: 6px; color: var(--violet); font-family: var(--mono); font-size: 14px; padding: 4px 0;
-  outline: none;
+.tt-toggle {
+  width: 44px; padding: 4px 0; text-align: center; cursor: pointer;
+  background: transparent; border: 1px solid transparent; border-radius: 6px;
+  color: var(--muted); font-family: var(--mono); font-size: 14px;
 }
-table.tt td.out-cell input:hover { border-color: var(--border); }
-table.tt td.out-cell input:focus { border-color: var(--violet); background: var(--bg-soft); }
-table.tt td.out-cell input.invalid { border-color: var(--danger); color: var(--danger); }
+.tt-toggle:hover { border-color: var(--border-strong); color: var(--text); }
+.tt-toggle.on { color: var(--violet); font-weight: 700; }
+.tt-toggle:focus-visible { outline: 2px solid var(--violet); outline-offset: 1px; }
 .tt-meta { color: var(--muted); font-size: 12.5px; font-family: var(--mono); margin-top: 10px; }
 
 .btn-primary {

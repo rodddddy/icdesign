@@ -624,7 +624,8 @@
     return ys;
   }
 
-  function renderSvg(builder, roots, inNames) {
+  function renderSvg(builder, roots, inNames, opts) {
+    const dl = !!(opts && opts.forDownload);
     const nodes = builder.nodes;
     const reach = reachable(nodes, roots.map(r => r.id));
     const ids = [...reach].sort((a, b) => a - b);
@@ -685,8 +686,8 @@
         const nd = nodes[id];
         const g = GATE[nd.type];
         const h = nodeHeight(nd.type, dataPinCount(nd));
-        const w = g.w + (g.bubble ? 7 : 0) + (g.xorCurve ? 8 : 0);
-        pos.set(id, { x: colX(lv), y: y + h / 2, w, h });
+        const w = g.w + (g.bubble ? 10 : 0) + (g.xorCurve ? 8 : 0);
+        pos.set(id, { x: colX(lv), y: y + h / 2, w, h, gate: true });
         y += h + 22;
       });
     }
@@ -729,21 +730,21 @@
 
     /* canvas size */
     let maxY = 0;
-    pos.forEach(p => maxY = Math.max(maxY, p.y + p.h / 2));
+    pos.forEach(p => maxY = Math.max(maxY, p.y + p.h / 2 + (p.gate ? 16 : 0)));
     const width = colX(maxLevel) + 150 + 90;
     const height = maxY + 40;
 
+    const f = v => Math.round(v * 10) / 10;
     const svg = [];
     svg.push('<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 ' + width + ' ' + height + '" font-family="Consolas,Menlo,monospace" font-size="12">');
-    svg.push('<rect x="0" y="0" width="' + width + '" height="' + height + '" fill="none"/>');
+    if (dl) svg.push('<rect x="0" y="0" width="' + width + '" height="' + height + '" fill="#ffffff"/>');
     svg.push('<defs><style>'
-      + '.gl{stroke-width:1.6;fill:none;stroke-linecap:round}'
-      + '.lbl{fill:#8b9bb4}'
-      + '.olbl{fill:#a78bfa;font-weight:bold}'
-      + '.gt{fill:#22d3ee;font-size:10px}'
+      + (dl
+        ? '.gl{stroke:#000;stroke-width:1.6;fill:none}.gb{stroke:#000;stroke-width:1.6;fill:#fff}.gc{stroke:#000;stroke-width:1.6;fill:none}.bb{fill:#fff;stroke:#000;stroke-width:1.6}.term{fill:#fff;stroke:#000;stroke-width:1.4}.dot{fill:#000}.lbl{fill:#000}.olbl{fill:#000;font-weight:bold}.gt{fill:#000;font-size:9.5px}'
+        : '.gl{stroke:var(--sg-wire);stroke-width:1.6;fill:none}.gb{stroke:var(--sg-gate);stroke-width:1.6;fill:var(--bg)}.gc{stroke:var(--sg-gate);stroke-width:1.6;fill:none}.bb{fill:var(--bg);stroke:var(--sg-gate);stroke-width:1.6}.term{fill:var(--bg);stroke:var(--sg-wire);stroke-width:1.4}.dot{fill:var(--sg-wire)}.lbl{fill:var(--sg-label)}.olbl{fill:var(--sg-out);font-weight:bold}.gt{fill:var(--sg-gate);opacity:.8;font-size:9.5px}')
       + '</style></defs>');
 
-    /* wires: group fanouts per source for trunk routing */
+    /* wires: orthogonal (horizontal/vertical) routing, one trunk per source */
     const edges = [];
     ids.forEach(id => {
       const nd = nodes[id];
@@ -758,34 +759,44 @@
       bySrc.get(e.src).push(e);
     });
     const wires = [];
+    const dots = [];
     bySrc.forEach((list, src) => {
       const s = outPin(src);
-      const color = 'hsl(' + (190 + (src * 37) % 70) + ' 80% 68%)';
-      if (list.length === 1) {
-        const t = list[0].pin;
-        wires.push(wirePath(s, t, color));
+      if (!s) return;
+      const ts = list.map(e => e.pin).filter(Boolean).sort((a, b) => a.y - b.y || a.x - b.x);
+      if (!ts.length) return;
+      if (ts.length === 1) {
+        const t = ts[0];
+        if (Math.abs(s.y - t.y) < 0.6) {
+          wires.push('M ' + f(s.x) + ' ' + f(s.y) + ' H ' + f(t.x));
+        } else {
+          const mx = f((s.x + t.x) / 2);
+          wires.push('M ' + f(s.x) + ' ' + f(s.y) + ' H ' + mx + ' V ' + f(t.y) + ' H ' + f(t.x));
+        }
+        dots.push([t.x, t.y]);
       } else {
-        const trunkX = s.x + 16 + (src % 3) * 8;
-        const ys = list.map(e => e.pin.y);
-        const yMin = Math.min(s.y, ...ys), yMax = Math.max(s.y, ...ys);
-        wires.push('<path class="gl" d="M ' + s.x + ' ' + s.y + ' L ' + trunkX + ' ' + s.y + ' M ' + trunkX + ' ' + yMin + ' L ' + trunkX + ' ' + yMax + '" stroke="' + color + '"/>');
-        list.forEach(e => {
-          wires.push('<path class="gl" d="M ' + trunkX + ' ' + e.pin.y + ' C ' + (trunkX + 26) + ' ' + e.pin.y + ', ' + (e.pin.x - 26) + ' ' + e.pin.y + ', ' + e.pin.x + ' ' + e.pin.y + '" stroke="' + color + '"/>');
-          wires.push('<circle cx="' + e.pin.x + '" cy="' + e.pin.y + '" r="2.4" fill="' + color + '"/>');
+        const trunkX = f(s.x + 14);
+        const yMin = Math.min(s.y, ts[0].y), yMax = Math.max(s.y, ts[ts.length - 1].y);
+        wires.push('M ' + f(s.x) + ' ' + f(s.y) + ' H ' + trunkX + ' V ' + f(yMin) + ' V ' + f(yMax));
+        ts.forEach(t => {
+          wires.push('M ' + trunkX + ' ' + f(t.y) + ' H ' + f(t.x));
+          dots.push([+trunkX, t.y]);
         });
+        if (Math.abs(s.y - yMin) > 0.6 && Math.abs(s.y - yMax) > 0.6) dots.push([+trunkX, s.y]);
       }
     });
-    svg.push('<g>' + wires.join('') + '</g>');
+    if (wires.length) svg.push('<path class="gl" d="' + wires.join(' ') + '"/>');
+    if (dots.length) svg.push('<g>' + dots.map(d => '<circle class="dot" cx="' + f(d[0]) + '" cy="' + f(d[1]) + '" r="2.6"/>').join('') + '</g>');
 
     /* nodes */
     ids.forEach(id => {
       const p = pos.get(id), nd = nodes[id];
-      const g = GATE[nd.type];
       if (nd.type === 'IN') {
+        svg.push('<line class="gl" x1="' + p.x + '" y1="' + p.y + '" x2="' + (p.x + 10) + '" y2="' + p.y + '"/>');
+        svg.push('<circle class="term" cx="' + (p.x + 10) + '" cy="' + p.y + '" r="3.2"/>');
         svg.push('<text x="' + (p.x - 6) + '" y="' + (p.y + 4) + '" text-anchor="end" class="lbl">' + esc(nd.label) + '</text>');
-        svg.push('<circle cx="' + (p.x + 10) + '" cy="' + p.y + '" r="3" fill="#22d3ee"/>');
       } else if (nd.type === 'CONST0' || nd.type === 'CONST1') {
-        svg.push('<rect x="' + p.x + '" y="' + (p.y - 10) + '" width="26" height="20" rx="4" fill="#111a2e" stroke="#1e2b47"/>');
+        svg.push('<rect class="gb" x="' + p.x + '" y="' + (p.y - 10) + '" width="26" height="20" rx="4"/>');
         svg.push('<text x="' + (p.x + 13) + '" y="' + (p.y + 4) + '" text-anchor="middle" class="lbl">' + (nd.type === 'CONST1' ? '1' : '0') + '</text>');
       } else {
         svg.push(gateSvg(nd, p));
@@ -797,46 +808,44 @@
       const p = pos.get(r.id);
       if (!p) return;
       const op = outPin(r.id);
-      svg.push('<path class="gl" d="M ' + op.x + ' ' + op.y + ' L ' + (op.x + 22) + ' ' + op.y + '" stroke="#a78bfa"/>');
-      svg.push('<circle cx="' + op.x + '" cy="' + op.y + '" r="2.6" fill="#a78bfa"/>');
-      svg.push('<text x="' + (op.x + 30) + '" y="' + (op.y + 4) + '" class="olbl">' + esc(r.label) + '</text>');
+      svg.push('<line class="gl" x1="' + f(op.x) + '" y1="' + f(op.y) + '" x2="' + f(op.x + 14) + '" y2="' + f(op.y) + '"/>');
+      svg.push('<circle class="dot" cx="' + f(op.x) + '" cy="' + f(op.y) + '" r="2.6"/>');
+      svg.push('<circle class="term" cx="' + f(op.x + 14) + '" cy="' + f(op.y) + '" r="3.2"/>');
+      svg.push('<text x="' + f(op.x + 24) + '" y="' + f(op.y + 4) + '" class="olbl">' + esc(r.label) + '</text>');
     });
 
     svg.push('</svg>');
     return { svg: svg.join('\n'), width, height, stats: netStats(nodes, reach, roots) };
-
-    function wirePath(s, t, color) {
-      const dx = Math.max(24, (t.x - s.x) / 2);
-      return '<path class="gl" d="M ' + s.x + ' ' + s.y + ' C ' + (s.x + dx) + ' ' + s.y + ', ' + (t.x - dx) + ' ' + t.y + ', ' + t.x + ' ' + t.y + '" stroke="' + color + '"/>'
-        + '<circle cx="' + t.x + '" cy="' + t.y + '" r="2.4" fill="' + color + '"/>';
-    }
     function gateSvg(nd, p) {
       const g = GATE[nd.type];
       const x = p.x, yc = p.y, h = p.h, w = p.w;
-      const bw = g.bubble ? w - 7 : w;
+      const bw = g.w;
+      const xo = g.xorCurve ? 8 : 0;
+      const top = yc - h / 2, r = h / 2;
+      const isOr = nd.type === 'OR' || nd.type === 'NOR' || nd.type === 'XOR' || nd.type === 'XNOR';
       let s = '';
       if (g.tri) {
-        s += '<path class="gl" d="M ' + x + ' ' + (yc - h / 2) + ' L ' + (x + bw - 8) + ' ' + yc + ' L ' + x + ' ' + (yc + h / 2) + ' Z" stroke="#22d3ee"/>';
-      } else if (nd.type === 'AND' || nd.type === 'NAND') {
-        const r = h / 2;
-        s += '<path class="gl" d="M ' + x + ' ' + (yc - r) + ' L ' + (x + bw - r) + ' ' + (yc - r) + ' A ' + r + ' ' + r + ' 0 0 1 ' + (x + bw - r) + ' ' + (yc + r) + ' L ' + x + ' ' + (yc + r) + ' Z" stroke="#22d3ee"/>';
-      } else if (g.xorCurve) { // OR / XOR / XNOR / NOR
-        const r = h / 2;
-        const xo = g.xorCurve ? 8 : 0;
-        s += '<path class="gl" d="M ' + (x + xo) + ' ' + (yc - r) + ' Q ' + (x + bw - r * 0.6) + ' ' + yc + ' ' + (x + xo) + ' ' + (yc + r) + ' Q ' + (x + 10 + xo) + ' ' + yc + ' ' + (x + xo) + ' ' + (yc - r) + '" stroke="#22d3ee"/>';
-        if (g.xorCurve && (nd.type === 'XOR' || nd.type === 'XNOR')) {
-          s += '<path class="gl" d="M ' + x + ' ' + (yc - r) + ' Q ' + (x + bw - r * 0.6 - 8) + ' ' + yc + ' ' + x + ' ' + (yc + r) + '" stroke="#22d3ee"/>';
-        }
+        s += '<path class="gb" d="M ' + f(x) + ' ' + f(top) + ' L ' + f(x + bw) + ' ' + f(yc) + ' L ' + f(x) + ' ' + f(top + h) + ' Z"/>';
       } else if (g.mux) {
-        const hw = w / 2;
-        s += '<path class="gl" d="M ' + (x + 6) + ' ' + (yc - h / 2) + ' L ' + (x + w - 6) + ' ' + (yc - h / 2 + 12) + ' L ' + (x + w - 6) + ' ' + (yc + h / 2 - 12) + ' L ' + (x + 6) + ' ' + (yc + h / 2) + ' Z" stroke="#a78bfa"/>';
-        s += '<text x="' + (x + w / 2) + '" y="' + (yc + 4) + '" text-anchor="middle" class="gt">' + nd.type + '</text>';
+        s += '<path class="gb" d="M ' + f(x) + ' ' + f(top) + ' L ' + f(x + bw) + ' ' + f(top + 7) + ' L ' + f(x + bw) + ' ' + f(top + h - 7) + ' L ' + f(x) + ' ' + f(top + h) + ' Z"/>';
+        s += '<text x="' + f(x + bw / 2) + '" y="' + f(yc + 3) + '" text-anchor="middle" class="gt">' + (g.mux === 2 ? '2:1' : '4:1') + '</text>';
+      } else if (isOr) {
+        const x0 = x + xo;
+        s += '<path class="gb" d="M ' + f(x0) + ' ' + f(top) + ' Q ' + f(x0 - 0.3 * bw) + ' ' + f(yc) + ' ' + f(x0) + ' ' + f(top + h)
+          + ' Q ' + f(x0 + 0.58 * bw) + ' ' + f(top + h) + ' ' + f(x0 + bw) + ' ' + f(yc)
+          + ' Q ' + f(x0 + 0.58 * bw) + ' ' + f(top) + ' ' + f(x0) + ' ' + f(top) + ' Z"/>';
+        if (g.xorCurve) {
+          s += '<path class="gc" d="M ' + f(x) + ' ' + f(top) + ' Q ' + f(x - 10) + ' ' + f(yc) + ' ' + f(x) + ' ' + f(top + h) + '"/>';
+        }
+      } else { /* AND family */
+        const ra = Math.min(r, bw - 6);
+        s += '<path class="gb" d="M ' + f(x) + ' ' + f(top) + ' L ' + f(x + bw - ra) + ' ' + f(top) + ' A ' + f(ra) + ' ' + f(ra) + ' 0 0 1 ' + f(x + bw - ra) + ' ' + f(top + h) + ' L ' + f(x) + ' ' + f(top + h) + ' Z"/>';
       }
       if (g.bubble) {
-        s += '<circle cx="' + (x + bw - 2 + (g.tri ? 6 : 5)) + '" cy="' + yc + '" r="4.4" fill="#0a0e17" stroke="#22d3ee" stroke-width="1.6"/>';
+        s += '<circle class="bb" cx="' + f(x + xo + bw + 5) + '" cy="' + f(yc) + '" r="5"/>';
       }
       if (!g.mux && nd.type !== 'BUF') {
-        s += '<text x="' + (x + w / 2 - (g.bubble ? 4 : 0)) + '" y="' + (yc + h / 2 + 13) + '" text-anchor="middle" class="gt">' + nd.type + '</text>';
+        s += '<text x="' + f(x + w / 2) + '" y="' + f(yc + h / 2 + 14) + '" text-anchor="middle" class="gt">' + nd.type + '</text>';
       }
       return s;
     }
@@ -969,13 +978,22 @@
       vals[r] = [];
       for (let o = 0; o < nOut; o++) vals[r][o] = '0';
     }
-    $$('#tt-container input[data-row]').forEach(el => {
+    $$('#tt-container button.tt-toggle').forEach(el => {
       const r = +el.dataset.row, o = +el.dataset.out;
-      let v = el.value.trim();
+      let v = el.textContent.trim();
       if (v !== '0' && v !== '1') v = '0';
       if (r < vals.length && o < nOut) vals[r][o] = v;
     });
     state.vals = vals;
+  }
+
+  function onCellToggle(btn) {
+    const r = +btn.dataset.row, o = +btn.dataset.out;
+    if (!state.vals[r]) return;
+    const nv = state.vals[r][o] === '1' ? '0' : '1';
+    state.vals[r][o] = nv;
+    btn.textContent = nv;
+    btn.classList.toggle('on', nv === '1');
   }
 
   function rebuildTable(preserve) {
@@ -1008,7 +1026,7 @@
     state.nRows = rows;
 
     const hint = $('#tt-hint');
-    if (hint) hint.textContent = rows + ' rows (2^' + nIn + ' input combinations). Leave a cell empty to treat it as 0.';
+    if (hint) hint.textContent = rows + ' rows (2^' + nIn + ' input combinations). Click a cell to toggle between 0 and 1.';
 
     const container = $('#tt-container');
     let html = '<table class="tt"><thead><tr>';
@@ -1020,12 +1038,19 @@
       const bits = bitsOf(r, nIn);
       bits.forEach(b => html += '<td class="in-cell">' + b + '</td>');
       for (let o = 0; o < nOut; o++) {
-        html += '<td class="out-cell"><input data-row="' + r + '" data-out="' + o + '" maxlength="1" value="' + vals[r][o] + '"></td>';
+        html += '<td class="out-cell"><button type="button" class="tt-toggle' + (vals[r][o] === '1' ? ' on' : '') + '" data-row="' + r + '" data-out="' + o + '">' + vals[r][o] + '</button></td>';
       }
       html += '</tr>';
     }
     html += '</tbody></table>';
     container.innerHTML = html;
+    if (!container.dataset.toggleBound) {
+      container.dataset.toggleBound = '1';
+      container.addEventListener('click', e => {
+        const btn = e.target.closest('.tt-toggle');
+        if (btn) onCellToggle(btn);
+      });
+    }
   }
 
   function esc(t) {
@@ -1050,28 +1075,22 @@
   }
 
   function readTable(nOut) {
-    const inputs = $$('#tt-container input[data-row]');
+    syncValsFromDom();
     const vals = [];
-    for (let r = 0; r < state.nRows; r++) vals[r] = [];
-    let bad = null;
-    inputs.forEach(el => {
-      const r = +el.dataset.row, o = +el.dataset.out;
-      let v = el.value.trim();
-      if (v === '') v = '0';
-      if (v !== '0' && v !== '1') { bad = { r, o, v: el.value }; return; }
-      vals[r][o] = v;
-    });
-    if (bad) return { ok: false, msg: 'Invalid value "' + bad.v + '" at row ' + (bad.r + 1) + ', output ' + (bad.o + 1) + '. Only 0/1 (or empty = 0) are allowed.' };
+    for (let r = 0; r < state.nRows; r++) {
+      vals[r] = [];
+      for (let o = 0; o < nOut; o++) vals[r][o] = state.vals[r][o] === '1' ? '1' : '0';
+    }
     return { ok: true, vals };
   }
 
   /* ---- generate ---- */
-  let lastSvg = null;
+  let lastResult = null;
 
   function onGenerate() {
     hideError();
     $('#result-panel').classList.add('hidden');
-    lastSvg = null;
+    lastResult = null;
 
     const sig = validateSignals();
     if (!sig.ok) return showError('Invalid signals', sig.msg, []);
@@ -1110,7 +1129,7 @@
     }
 
     const rendered = renderSvg(b, roots, inNames);
-    lastSvg = rendered.svg;
+    lastResult = { builder: b, roots, inNames };
 
     /* expressions */
     const rc = $('#result-container');
@@ -1166,8 +1185,9 @@
   }
 
   function downloadSvg() {
-    if (!lastSvg) return;
-    const blob = new Blob([lastSvg], { type: 'image/svg+xml' });
+    if (!lastResult) return;
+    const rendered = renderSvg(lastResult.builder, lastResult.roots, lastResult.inNames, { forDownload: true });
+    const blob = new Blob([rendered.svg], { type: 'image/svg+xml' });
     const url = URL.createObjectURL(blob);
     const a = document.createElement('a');
     a.href = url;
