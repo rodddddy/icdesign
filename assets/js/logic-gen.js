@@ -223,14 +223,14 @@
       mux2(s, d1, d0) {
         if (d0 === d1) return d0;
         let id = keyOf('mux2:' + s + ',' + d1 + ',' + d0);
-        if (id == null) { id = reg('MUX2', [s, d1, d0]); memo['mux2:' + s + ',' + d1 + ',' + d0] = id; }
+        if (id == null) { id = reg('MUX', [s, d1, d0]); memo['mux2:' + s + ',' + d1 + ',' + d0] = id; }
         return id;
       },
       /* d_index chosen by {s1,s0}: d0=00 d1=01 d2=10 d3=11 */
       mux4(s1, s0, d3, d2, d1, d0) {
         if (d0 === d1 && d1 === d2 && d2 === d3) return d0;
         let id = keyOf('mux4:' + s1 + ',' + s0 + ',' + d3 + ',' + d2 + ',' + d1 + ',' + d0);
-        if (id == null) { id = reg('MUX4', [s1, s0, d3, d2, d1, d0]); memo['mux4:' + s1 + ',' + s0 + ',' + d3 + ',' + d2 + ',' + d1 + ',' + d0] = id; }
+        if (id == null) { id = reg('MUX', [s1, s0, d3, d2, d1, d0]); memo['mux4:' + s1 + ',' + s0 + ',' + d3 + ',' + d2 + ',' + d1 + ',' + d0] = id; }
         return id;
       }
     };
@@ -394,9 +394,9 @@
       const x = ids[0];
       if (vals[0] === 0 && vals[1] === 1) out = x;
       else if (lib.has('INV') || lib.has('NAND') || lib.has('NOR')) out = makeNot(b, x, lib);
-      else if (lib.has('MUX2')) out = b.mux2(x, b.const1(), b.const0());
+      else if (lib.has('MUX')) out = b.mux2(x, b.const1(), b.const0());
       else { const e = new Error('inversion'); e.needInv = true; throw e; }
-    } else if (lib.has('MUX4') && ids.length >= 2) {
+    } else if (lib.has('MUX') && ids.length >= 2) {
       const a = ids[0], c = ids[1], rest = ids.slice(2);
       const q = vals.length / 4;
       const c00 = muxTree(b, rest, vals.slice(0, q), lib, memo);
@@ -404,15 +404,15 @@
       const c10 = muxTree(b, rest, vals.slice(2 * q, 3 * q), lib, memo);
       const c11 = muxTree(b, rest, vals.slice(3 * q), lib, memo);
       out = b.mux4(a, c, c11, c10, c01, c00);
-    } else if (lib.has('MUX2')) {
+    } else if (lib.has('MUX')) {
       const a = ids[0], rest = ids.slice(1);
       const h = vals.length / 2;
       const d0 = muxTree(b, rest, vals.slice(0, h), lib, memo);
       const d1 = muxTree(b, rest, vals.slice(h), lib, memo);
       out = b.mux2(a, d1, d0);
     } else {
-      const e = new Error('need MUX2');
-      e.need = 'MUX2';
+      const e = new Error('need MUX');
+      e.need = 'MUX';
       throw e;
     }
     memo[key] = out;
@@ -424,7 +424,7 @@
     if (e.need === 'AND') return 'an AND gate is required but AND is not selected';
     if (e.need === 'OR') return 'an OR gate is required but OR is not selected';
     if (e.need === 'XOR') return 'an XOR gate is required but XOR is not selected';
-    if (e.need === 'MUX2') return 'a MUX2 is required but MUX2 is not selected';
+    if (e.need === 'MUX') return 'a MUX is required but MUX is not selected';
     return e.message || 'mapping failed';
   }
 
@@ -487,9 +487,9 @@
       try { return finish(anfPath(b, on, n, inIds, lib), 'XOR/AND (ANF)'); }
       catch (e) { reasons.push('XOR/AND mapping: ' + reasonText(e, lib)); }
     }
-    // 7) MUX tree (prefers MUX4 nodes, falls back to MUX2)
-    if (lib.has('MUX4') || lib.has('MUX2')) {
-      try { return finish(muxTree(b, inIds, vals, lib, {}), lib.has('MUX4') ? 'MUX4 tree' : 'MUX2 tree'); }
+    // 7) MUX tree (uses 4:1 nodes when possible, falls back to 2:1)
+    if (lib.has('MUX')) {
+      try { return finish(muxTree(b, inIds, vals, lib, {}), 'MUX tree'); }
       catch (e) { reasons.push('MUX mapping: ' + reasonText(e, lib)); }
     }
 
@@ -503,7 +503,7 @@
     } else if (lib.size === 1 && lib.has('XOR')) {
       reasons.unshift('XOR alone can only implement parity (linear) functions; this truth table is not one.');
     }
-    reasons.push('Hint: a complete library needs one of — AND+INV, OR+INV, NAND, NOR, XOR+AND — or MUX2/MUX4 with (optionally) INV/NAND/NOR.');
+    reasons.push('Hint: a complete library needs one of — AND+INV, OR+INV, NAND, NOR, XOR+AND — or MUX with (optionally) INV/NAND/NOR.');
     err.reasons = reasons;
     throw err;
   }
@@ -603,21 +603,18 @@
     XNOR:   { w: 52, base: 32, gap: 16, bubble: true, xorCurve: true },
     INV:    { w: 32, base: 24, gap: 16, bubble: true, tri: true },
     BUF:    { w: 32, base: 24, gap: 16, tri: true },
-    MUX2:   { w: 56, base: 0, gap: 18, mux: 2 },
-    MUX4:   { w: 62, base: 0, gap: 18, mux: 4 }
+    MUX:    { w: 62, base: 0, gap: 18, mux: true }
   };
+
+  function muxSelCount(nd) { return nd.ins.length >= 6 ? 2 : 1; }
 
   function nodeHeight(type, ins) {
     const g = GATE[type];
-    if (g.mux === 2) return 66;
-    if (g.mux === 4) return 104;
+    if (g.mux) return ins >= 4 ? 100 : 62;
     return Math.max(g.base, ins * g.gap + 14);
   }
   /* pin offsets relative to center y (data pins only) */
   function pinYs(type, ins) {
-    const g = GATE[type];
-    if (g.mux === 2) return [0, 0]; // d1,d0 stacked by index below
-    if (g.mux === 4) return [0, 0, 0, 0];
     const h = nodeHeight(type, ins);
     const ys = [];
     for (let i = 0; i < ins; i++) ys.push(-h / 2 + (h / (ins + 1)) * (i + 1));
@@ -686,44 +683,45 @@
         const nd = nodes[id];
         const g = GATE[nd.type];
         const h = nodeHeight(nd.type, dataPinCount(nd));
-        const w = g.w + (g.bubble ? 10 : 0) + (g.xorCurve ? 8 : 0);
+        const w = g.w + (g.bubble ? 10 : 0) + (g.xorCurve ? 10 : 0);
         pos.set(id, { x: colX(lv), y: y + h / 2, w, h, gate: true });
         y += h + 22;
       });
     }
 
     function dataPinCount(nd) {
-      return nd.type === 'MUX2' ? 2 : nd.type === 'MUX4' ? 4 : nd.ins.length;
+      return nd.type === 'MUX' ? nd.ins.length - muxSelCount(nd) : nd.ins.length;
     }
 
-    /* pin coordinates (absolute); ins order: MUX2=[s,d1,d0], MUX4=[s1,s0,d3,d2,d1,d0] */
+    function isOrType(t) { return t === 'OR' || t === 'NOR' || t === 'XOR' || t === 'XNOR'; }
+
+    /* pin coordinates (absolute); MUX ins order: [s, d1, d0] or [s1, s0, d3, d2, d1, d0] */
     function inPin(id, i) {
       const p = pos.get(id), nd = nodes[id], g = GATE[nd.type];
-      if (nd.type === 'IN') return { x: p.x + 10, y: p.y };
+      if (nd.type === 'IN') return { x: p.x + 6, y: p.y };
       if (nd.type === 'CONST0' || nd.type === 'CONST1') return { x: p.x + p.w, y: p.y };
-      if (g.mux === 2) {
-        if (i === 0) return selPin(id, 0);
-        return { x: p.x, y: p.y + (i === 1 ? -10 : 10) };
-      }
-      if (g.mux === 4) {
-        if (i === 0) return selPin(id, 1);   // s1
-        if (i === 1) return selPin(id, 0);   // s0
-        return { x: p.x, y: p.y + [-27, -9, 9, 27][i - 2] }; // d3,d2,d1,d0
+      if (g.mux) {
+        const nSel = muxSelCount(nd);
+        if (i < nSel) return selPin(id, nSel - 1 - i);
+        const ys = pinYs(nd.type, nd.ins.length - nSel);
+        return { x: p.x, y: p.y + ys[i - nSel] };
       }
       const ys = pinYs(nd.type, nd.ins.length);
-      return { x: p.x, y: p.y + ys[i] };
+      const px = isOrType(nd.type) ? p.x + (GATE[nd.type].xorCurve ? 10 : 0) : p.x;
+      return { x: px, y: p.y + ys[i] };
     }
     function selPin(id, which) {
       const p = pos.get(id), nd = nodes[id];
-      if (nd.type === 'MUX2') return { x: p.x + p.w / 2, y: p.y + p.h / 2 };
-      // MUX4: s0 bottom-left, s1 bottom-right
+      const nSel = muxSelCount(nd);
+      const y = p.y + p.h / 2;
+      if (nSel === 1) return { x: p.x + p.w / 2, y };
       return which === 0
-        ? { x: p.x + p.w * 0.32, y: p.y + p.h / 2 }
-        : { x: p.x + p.w * 0.68, y: p.y + p.h / 2 };
+        ? { x: p.x + p.w * 0.32, y }
+        : { x: p.x + p.w * 0.68, y };
     }
     function outPin(id) {
       const p = pos.get(id), nd = nodes[id];
-      if (nd.type === 'IN') return { x: p.x + 10, y: p.y };
+      if (nd.type === 'IN') return { x: p.x + 6, y: p.y };
       if (nd.type === 'CONST0' || nd.type === 'CONST1') return { x: p.x + p.w, y: p.y };
       return { x: p.x + p.w, y: p.y };
     }
@@ -758,31 +756,85 @@
       if (!bySrc.has(e.src)) bySrc.set(e.src, []);
       bySrc.get(e.src).push(e);
     });
+    /* stagger trunk lanes so different nets in the same column never overlap */
+    const colSrcs = new Map();
+    bySrc.forEach((list, src) => {
+      const s = outPin(src);
+      if (!s || !list.length) return;
+      const key = Math.round(s.x / 4);
+      if (!colSrcs.has(key)) colSrcs.set(key, []);
+      colSrcs.get(key).push({ src, s, n: list.length });
+    });
+    const laneOf = new Map();
+    colSrcs.forEach(list => {
+      list.sort((a, b) => a.s.y - b.s.y);
+      let lane = 0;
+      list.forEach(it => { laneOf.set(it.src, lane); lane++; });
+    });
+    /* gate bodies a horizontal wire at y must not cross */
+    const blockers = (y, x1, x2) => {
+      const rs = [];
+      ids.forEach(id => {
+        const p = pos.get(id), nd = nodes[id];
+        if (!p || nd.type === 'IN') return;
+        const gy1 = p.y - p.h / 2, gy2 = p.y + p.h / 2;
+        if (y > gy1 + 2 && y < gy2 - 2 && p.x + p.w > x1 + 4 && p.x < x2 - 4) {
+          rs.push([p.x, gy1, p.x + p.w, gy2]);
+        }
+      });
+      return rs;
+    };
     const wires = [];
     const dots = [];
+    const dotKeys = new Set();
+    const addDot = (x, y) => {
+      const k = f(x) + ',' + f(y);
+      if (dotKeys.has(k)) return;
+      dotKeys.add(k);
+      dots.push([x, y]);
+    };
     bySrc.forEach((list, src) => {
       const s = outPin(src);
       if (!s) return;
+      const lane = laneOf.get(src) || 0;
       const ts = list.map(e => e.pin).filter(Boolean).sort((a, b) => a.y - b.y || a.x - b.x);
       if (!ts.length) return;
       if (ts.length === 1) {
         const t = ts[0];
         if (Math.abs(s.y - t.y) < 0.6) {
-          wires.push('M ' + f(s.x) + ' ' + f(s.y) + ' H ' + f(t.x));
+          const rs = blockers(s.y, s.x, t.x);
+          if (!rs.length) {
+            wires.push('M ' + f(s.x) + ' ' + f(s.y) + ' H ' + f(t.x));
+          } else {
+            /* detour above the blocking gate bodies, drop back near the pin */
+            const bx1 = Math.min.apply(null, rs.map(r => r[0])) - 8;
+            const dy = Math.min.apply(null, rs.map(r => r[1])) - 12;
+            wires.push('M ' + f(s.x) + ' ' + f(s.y) + ' H ' + f(bx1)
+              + ' V ' + f(dy) + ' H ' + f(t.x - 14)
+              + ' V ' + f(t.y) + ' H ' + f(t.x));
+          }
         } else {
-          const mx = f((s.x + t.x) / 2);
+          const mx = f(s.x + 10 + lane * 8);
           wires.push('M ' + f(s.x) + ' ' + f(s.y) + ' H ' + mx + ' V ' + f(t.y) + ' H ' + f(t.x));
         }
-        dots.push([t.x, t.y]);
       } else {
-        const trunkX = f(s.x + 14);
+        const trunkX = s.x + 14 + lane * 9;
         const yMin = Math.min(s.y, ts[0].y), yMax = Math.max(s.y, ts[ts.length - 1].y);
-        wires.push('M ' + f(s.x) + ' ' + f(s.y) + ' H ' + trunkX + ' V ' + f(yMin) + ' V ' + f(yMax));
+        const flat = Math.abs(yMax - yMin) < 0.6;
+        wires.push('M ' + f(s.x) + ' ' + f(s.y) + ' H ' + f(trunkX) + ' V ' + f(yMin) + ' V ' + f(yMax));
         ts.forEach(t => {
-          wires.push('M ' + trunkX + ' ' + f(t.y) + ' H ' + f(t.x));
-          dots.push([+trunkX, t.y]);
+          const rs = blockers(t.y, trunkX, t.x);
+          if (rs.length) {
+            const bx1 = Math.min.apply(null, rs.map(r => r[0])) - 8;
+            const dy = Math.min.apply(null, rs.map(r => r[1])) - 12;
+            wires.push('M ' + f(trunkX) + ' ' + f(t.y) + ' H ' + f(bx1)
+              + ' V ' + f(dy) + ' H ' + f(t.x - 14)
+              + ' V ' + f(t.y) + ' H ' + f(t.x));
+          } else {
+            wires.push('M ' + f(trunkX) + ' ' + f(t.y) + ' H ' + f(t.x));
+          }
+          if (!flat) addDot(trunkX, t.y);
         });
-        if (Math.abs(s.y - yMin) > 0.6 && Math.abs(s.y - yMax) > 0.6) dots.push([+trunkX, s.y]);
       }
     });
     if (wires.length) svg.push('<path class="gl" d="' + wires.join(' ') + '"/>');
@@ -792,8 +844,7 @@
     ids.forEach(id => {
       const p = pos.get(id), nd = nodes[id];
       if (nd.type === 'IN') {
-        svg.push('<line class="gl" x1="' + p.x + '" y1="' + p.y + '" x2="' + (p.x + 10) + '" y2="' + p.y + '"/>');
-        svg.push('<circle class="term" cx="' + (p.x + 10) + '" cy="' + p.y + '" r="3.2"/>');
+        svg.push('<circle class="term" cx="' + (p.x + 6) + '" cy="' + p.y + '" r="3.2"/>');
         svg.push('<text x="' + (p.x - 6) + '" y="' + (p.y + 4) + '" text-anchor="end" class="lbl">' + esc(nd.label) + '</text>');
       } else if (nd.type === 'CONST0' || nd.type === 'CONST1') {
         svg.push('<rect class="gb" x="' + p.x + '" y="' + (p.y - 10) + '" width="26" height="20" rx="4"/>');
@@ -809,7 +860,6 @@
       if (!p) return;
       const op = outPin(r.id);
       svg.push('<line class="gl" x1="' + f(op.x) + '" y1="' + f(op.y) + '" x2="' + f(op.x + 14) + '" y2="' + f(op.y) + '"/>');
-      svg.push('<circle class="dot" cx="' + f(op.x) + '" cy="' + f(op.y) + '" r="2.6"/>');
       svg.push('<circle class="term" cx="' + f(op.x + 14) + '" cy="' + f(op.y) + '" r="3.2"/>');
       svg.push('<text x="' + f(op.x + 24) + '" y="' + f(op.y + 4) + '" class="olbl">' + esc(r.label) + '</text>');
     });
@@ -820,22 +870,31 @@
       const g = GATE[nd.type];
       const x = p.x, yc = p.y, h = p.h, w = p.w;
       const bw = g.w;
-      const xo = g.xorCurve ? 8 : 0;
+      const xo = g.xorCurve ? 10 : 0;
       const top = yc - h / 2, r = h / 2;
-      const isOr = nd.type === 'OR' || nd.type === 'NOR' || nd.type === 'XOR' || nd.type === 'XNOR';
+      const isOr = isOrType(nd.type);
       let s = '';
       if (g.tri) {
         s += '<path class="gb" d="M ' + f(x) + ' ' + f(top) + ' L ' + f(x + bw) + ' ' + f(yc) + ' L ' + f(x) + ' ' + f(top + h) + ' Z"/>';
       } else if (g.mux) {
+        const nSel = muxSelCount(nd);
+        const dataN = nd.ins.length - nSel;
         s += '<path class="gb" d="M ' + f(x) + ' ' + f(top) + ' L ' + f(x + bw) + ' ' + f(top + 7) + ' L ' + f(x + bw) + ' ' + f(top + h - 7) + ' L ' + f(x) + ' ' + f(top + h) + ' Z"/>';
-        s += '<text x="' + f(x + bw / 2) + '" y="' + f(yc + 3) + '" text-anchor="middle" class="gt">' + (g.mux === 2 ? '2:1' : '4:1') + '</text>';
+        s += '<text x="' + f(x + bw / 2) + '" y="' + f(top + 14) + '" text-anchor="middle" class="gt">MUX</text>';
+        const ys = pinYs(nd.type, dataN);
+        for (let j = 0; j < dataN; j++) {
+          const code = (dataN - 1 - j).toString(2).padStart(nSel, '0');
+          s += '<text x="' + f(x + 7) + '" y="' + f(yc + ys[j] + 3.5) + '" class="gt">' + code + '</text>';
+        }
       } else if (isOr) {
-        const x0 = x + xo;
-        s += '<path class="gb" d="M ' + f(x0) + ' ' + f(top) + ' Q ' + f(x0 - 0.3 * bw) + ' ' + f(yc) + ' ' + f(x0) + ' ' + f(top + h)
-          + ' Q ' + f(x0 + 0.58 * bw) + ' ' + f(top + h) + ' ' + f(x0 + bw) + ' ' + f(yc)
-          + ' Q ' + f(x0 + 0.58 * bw) + ' ' + f(top) + ' ' + f(x0) + ' ' + f(top) + ' Z"/>';
+        /* concave back: the left arc bows into the gate (to the right) */
+        const xb = x + xo;
+        s += '<path class="gb" d="M ' + f(xb) + ' ' + f(top)
+          + ' Q ' + f(xb + 0.62 * bw) + ' ' + f(top) + ' ' + f(xb + bw) + ' ' + f(yc)
+          + ' Q ' + f(xb + 0.62 * bw) + ' ' + f(top + h) + ' ' + f(xb) + ' ' + f(top + h)
+          + ' Q ' + f(xb + 0.34 * bw) + ' ' + f(yc) + ' ' + f(xb) + ' ' + f(top) + ' Z"/>';
         if (g.xorCurve) {
-          s += '<path class="gc" d="M ' + f(x) + ' ' + f(top) + ' Q ' + f(x - 10) + ' ' + f(yc) + ' ' + f(x) + ' ' + f(top + h) + '"/>';
+          s += '<path class="gc" d="M ' + f(x) + ' ' + f(top) + ' Q ' + f(x + 0.34 * bw) + ' ' + f(yc) + ' ' + f(x) + ' ' + f(top + h) + '"/>';
         }
       } else { /* AND family */
         const ra = Math.min(r, bw - 6);
@@ -879,7 +938,7 @@
   if (typeof document === 'undefined') return;
 
   const MAX_IO = 8;
-  const GATE_LIST = ['NAND', 'NOR', 'INV', 'BUF', 'AND', 'OR', 'XOR', 'XNOR', 'MUX2', 'MUX4'];
+  const GATE_LIST = ['NAND', 'NOR', 'INV', 'BUF', 'AND', 'OR', 'XOR', 'XNOR', 'MUX'];
 
   const state = {
     inputs: ['A', 'B'],
