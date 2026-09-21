@@ -672,13 +672,29 @@
 
   function renderSvg(builder, roots, inNames, opts) {
     const dl = !!(opts && opts.forDownload);
+    const f = v => Math.round(v * 10) / 10;
     const nodes = builder.nodes;
     const reach = reachable(nodes, roots.map(r => r.id));
     const ids = [...reach].sort((a, b) => a - b);
     const level = computeLevels(nodes, ids);
 
     const maxLevel = Math.max(1, ...ids.map(id => level.get(id)));
-    const COL_X_IN = 30, COL_W = 148, GATE_X0 = 118;
+    const rootIds = new Set(roots.map(r => r.id));
+    const consumers = new Map(ids.map(id => [id, []]));
+    ids.forEach(id => nodes[id].ins.forEach(src => consumers.get(src).push(id)));
+    [...ids].reverse().forEach(id => {
+      const next = consumers.get(id);
+      if (level.get(id) && !rootIds.has(id) && next.length) {
+        level.set(id, Math.min(...next.map(dst => level.get(dst))) - 1);
+      }
+    });
+    const TRACK = 12;
+    const colXs = [30];
+    for (let lv = 1; lv <= maxLevel; lv++) {
+      const crossing = ids.filter(id => level.get(id) < lv
+        && consumers.get(id).some(dst => level.get(dst) >= lv)).length;
+      colXs[lv] = colXs[lv - 1] + (lv === 1 ? 44 : 80) + Math.max(84, (crossing + 2) * TRACK);
+    }
 
     /* group by level */
     const byLevel = new Map();
@@ -690,7 +706,7 @@
 
     /* layout */
     const pos = new Map(); // id -> {x, y, h, w}
-    const colX = lv => lv === 0 ? COL_X_IN : GATE_X0 + (lv - 1) * COL_W;
+    const colX = lv => colXs[lv];
 
     // level 0: inputs & constants
     const lv0 = (byLevel.get(0) || []).slice().sort((a, b) => {
@@ -707,13 +723,14 @@
       return nd.type;
     }
     const inOrder = [];
-    let yCursor = 30;
+    const topMargin = 36 + TRACK * lv0.length;
+    let yCursor = topMargin;
     lv0.forEach(id => {
       const nd = nodes[id];
       const isIn = nd.type === 'IN';
       pos.set(id, { x: colX(0), y: yCursor, w: isIn ? 0 : 26, h: 20, label: labelOf(id) });
       if (isIn) inOrder.push(id);
-      yCursor += 34;
+      yCursor += 48;
     });
 
     // gates: column by column, order by barycenter of child y positions
@@ -727,14 +744,15 @@
         nd.ins.forEach(ch => { const p = pos.get(ch); if (p) { s += p.y; c++; } });
         return c ? s / c : 0;
       }
-      let y = 30;
+      let y = topMargin - 24;
       col.forEach(id => {
         const nd = nodes[id];
         const g = GATE[nd.type];
         const h = nodeHeight(nd.type, dataPinCount(nd));
         const w = g.w + (g.bubble ? 10 : 0) + (g.xorCurve ? 10 : 0);
-        pos.set(id, { x: colX(lv), y: y + h / 2, w, h, gate: true });
-        y += h + 22;
+        const cy = Math.max(y + h / 2, bary(id));
+        pos.set(id, { x: colX(lv), y: cy, w, h, gate: true });
+        y = cy + h / 2 + 52 + (g.mux ? 24 : 0);
       });
     }
 
@@ -790,15 +808,22 @@
       return { x: p.x + p.w, y: p.y };
     }
 
+    lv0.forEach(id => {
+      const next = consumers.get(id);
+      if (nodes[id].type !== 'IN' || next.length !== 1) return;
+      const dst = next[0], pin = inPin(dst, nodes[dst].ins.indexOf(id));
+      if (pin.below || lv0.some(other => other !== id && Math.abs(pos.get(other).y - pin.y) < 14)) return;
+      pos.get(id).y = pin.y;
+    });
+
     /* canvas size */
     let maxY = 0;
     pos.forEach(p => maxY = Math.max(maxY, p.y + p.h / 2 + (p.gate ? 16 : 0)));
     const width = colX(maxLevel) + 150 + 90;
     const height = maxY + 40;
 
-    const f = v => Math.round(v * 10) / 10;
     const svg = [];
-    svg.push('<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 ' + width + ' ' + height + '" font-family="Consolas,Menlo,monospace" font-size="12">');
+    svg.push('<svg xmlns="http://www.w3.org/2000/svg" width="' + width + '" height="' + height + '" viewBox="0 0 ' + width + ' ' + height + '" font-family="Consolas,Menlo,monospace" font-size="12">');
     if (dl) svg.push('<rect x="0" y="0" width="' + width + '" height="' + height + '" fill="#ffffff"/>');
     svg.push('<defs><style>'
       + (dl
@@ -849,8 +874,8 @@
         if (!p || nd.type === 'IN') return;
         if (allowDst && allowDst.has(id)) return;
         const gy1 = p.y - p.h / 2, gy2 = p.y + p.h / 2;
-        if ((y > gy1 + 2 && y < gy2 - 2 || Math.abs(y - gy1) < 0.5 || Math.abs(y - gy2) < 0.5)
-          && p.x + p.w > x1 + 4 && p.x < x2 - 4) {
+        if (y > gy1 - 8 && y < gy2 + 8
+          && p.x + p.w > x1 + 0.1 && p.x < x2 - 0.1) {
           rs.push([p.x - 8, gy1 - 12]);
         }
       });
@@ -869,6 +894,10 @@
        de-confliction) */
     const usedH = [];
     const usedV = [];
+    rootIds.forEach(src => {
+      const pin = outPin(src);
+      usedH.push({ src, y: f(pin.y), x1: f(pin.x), x2: f(pin.x + 14) });
+    });
     let curSrc = null;
     const registerWire = (src, d) => {
       const toks = d.split(' ');
@@ -1074,9 +1103,9 @@
           if (L.via != null) continue;
           const rs = hBlockers(L.y, L.x1, L.x2, skip, allowDst);
           if (!rs.length) continue;
-          const riseX = Math.max(L.x1, Math.min.apply(null, rs.map(r => r[0])) - lane * 9);
-          const dy0 = Math.max(8, Math.min.apply(null, rs.map(r => r[1])) - lane * 9);
-          let drX = Math.min(L.x2 - 14, dropX == null ? Infinity : dropX) - lane * 9;
+          const riseX = Math.max(L.x1, Math.min.apply(null, rs.map(r => r[0])) - lane * TRACK);
+          const dy0 = Math.max(8, Math.min.apply(null, rs.map(r => r[1])) - lane * TRACK);
+          let drX = Math.min(L.x2 - 14, dropX == null ? Infinity : dropX) - lane * TRACK;
           /* the corridor must cover every gate blocking this row — a drop
              x inside a blocker's span leaves the return leg slicing through
              the gate body (e.g. leg 240..340 blocked by gate 266..326 with
@@ -1087,8 +1116,8 @@
             if (!p || nd.type === 'IN') return;
             if (allowDst && allowDst.has(id)) return;
             const gy1 = p.y - p.h / 2, gy2 = p.y + p.h / 2;
-            if ((L.y > gy1 + 2 && L.y < gy2 - 2 || Math.abs(L.y - gy1) < 0.5 || Math.abs(L.y - gy2) < 0.5)
-              && p.x + p.w > L.x1 + 4 && p.x < L.x2 - 4) bg.push(p);
+            if (L.y > gy1 - 8 && L.y < gy2 + 8
+              && p.x + p.w > L.x1 + 0.1 && p.x < L.x2 - 0.1) bg.push(p);
           });
           if (bg.length) {
             const gR = Math.max.apply(null, bg.map(p => p.x + p.w));
@@ -1202,6 +1231,93 @@
        ever reach the SVG path parser */
     const dstr = (...parts) => parts.filter(p => p && p.trim()).join(' ');
     const pushWire = (src, d) => { wires.push({ src, d }); registerWire(src, d); };
+    const compactPoints = points => {
+      const out = [];
+      points.forEach(p => {
+        const last = out[out.length - 1];
+        if (last && Math.abs(last.x - p.x) < 0.05 && Math.abs(last.y - p.y) < 0.05) return;
+        while (out.length > 1) {
+          const a = out[out.length - 2], b = out[out.length - 1];
+          if (a.x !== b.x || b.x !== p.x) {
+            if (a.y !== b.y || b.y !== p.y) break;
+          }
+          out.pop();
+        }
+        out.push(p);
+      });
+      return out;
+    };
+    const pathData = points => points.map((p, i) => i === 0
+      ? 'M ' + f(p.x) + ' ' + f(p.y)
+      : (p.y === points[i - 1].y ? 'H ' + f(p.x) : 'V ' + f(p.y))).join(' ');
+    const simpleRoute = (src, start, t, skip, branch) => {
+      const end = { x: t.x, y: t.y + t.below };
+      const candidates = [];
+      const consider = points => {
+        if (t.below) points.push({ x: t.x, y: t.y });
+        const ps = compactPoints(points);
+        if (ps.length < 2) return;
+        if (!branch && (ps[1].y !== start.y || ps[1].x < start.x + 12)) return;
+        const last = ps[ps.length - 2];
+        if (t.below ? last.x !== t.x || last.y < t.y + 12 : last.y !== t.y || last.x > pos.get(t.dst).x - 8) return;
+        let length = 0, crossings = 0;
+        for (let i = 1; i < ps.length; i++) {
+          const a = ps[i - 1], b = ps[i], horizontal = a.y === b.y;
+          const lo = horizontal ? Math.min(a.x, b.x) : Math.min(a.y, b.y);
+          const hi = horizontal ? Math.max(a.x, b.x) : Math.max(a.y, b.y);
+          const landing = i === ps.length - 1 ? new Set([t.dst]) : null;
+          if (horizontal) {
+            if (hBlockers(a.y, lo, hi, skip, landing).length) return;
+            for (const u of usedH) {
+              if (u.src !== src && Math.abs(u.y - a.y) < 8 && Math.min(hi, u.x2) - Math.max(lo, u.x1) > 0.1) return;
+            }
+            for (const u of usedV) {
+              if (u.src === src || u.x < lo || u.x > hi || a.y < u.y1 || a.y > u.y2) continue;
+              if (Math.min(u.x - lo, hi - u.x, a.y - u.y1, u.y2 - a.y) < 4) return;
+              crossings++;
+            }
+          } else {
+            if (!vClean2(a.x, lo, hi, landing, skip)) return;
+            for (const u of usedV) {
+              if (u.src !== src && Math.abs(u.x - a.x) < 8 && Math.min(hi, u.y2) - Math.max(lo, u.y1) > 0.1) return;
+            }
+            for (const u of usedH) {
+              if (u.src === src || u.y < lo || u.y > hi || a.x < u.x1 || a.x > u.x2) continue;
+              if (Math.min(u.y - lo, hi - u.y, a.x - u.x1, u.x2 - a.x) < 4) return;
+              crossings++;
+            }
+          }
+          if (epTaken(b.x, b.y, skip)) return;
+          length += hi - lo;
+        }
+        candidates.push({ ps, score: (ps.length - 2) * 80 + length + crossings * 12 });
+      };
+      if (start.y === end.y) consider([start, end]);
+      const xs = [];
+      const left = start.x + (branch ? 0 : 18);
+      const right = Math.min(t.below ? t.edge - 18 : pos.get(t.dst).x - 18, end.x - 12);
+      for (let x = left; x <= right; x += TRACK) xs.push(x);
+      if (right >= left) xs.push(right);
+      xs.forEach(x => consider([start, { x, y: start.y }, { x, y: end.y }, end]));
+      if (!candidates.length) {
+        const rows = new Set([start.y, end.y]);
+        pos.forEach(p => {
+          rows.add(p.y - p.h / 2 - 18);
+          rows.add(p.y + p.h / 2 + (p.gate ? 30 : 18));
+        });
+        for (let y = 12; y < topMargin; y += TRACK) rows.add(y);
+        const riseXs = xs.slice(0, 5), dropXs = xs.slice(-5);
+        for (const y of rows) {
+          if (y < 8 || y > height - 8) continue;
+          for (const x1 of riseXs) for (const x2 of dropXs) {
+            if (x2 - x1 < TRACK) continue;
+            consider([start, { x: x1, y: start.y }, { x: x1, y }, { x: x2, y }, { x: x2, y: end.y }, end]);
+          }
+        }
+      }
+      candidates.sort((a, b) => a.score - b.score);
+      return candidates.length ? pathData(candidates[0].ps) : null;
+    };
     bySrc.forEach((list, src) => {
       curSrc = src;
       const s = outPin(src);
@@ -1215,6 +1331,8 @@
       const cap = t => (t.below ? t.edge - 8 : null);
       if (ts.length === 1) {
         const t = ts[0];
+        const simple = simpleRoute(src, s, t, skip, false);
+        if (simple) { pushWire(src, simple); return; }
         const ad = new Set([t.dst]);
         const jy = t.y + t.below;
         if (Math.abs(s.y - jy) < 0.25 && rowFree(src, jy, s.x, t.x, skip, ad)) {
@@ -1226,7 +1344,7 @@
              parallel-close to another net's vertical, or pass through a
              foreign pin — step it right until clean; lane overflow in a
              crowded column can push mx past the pin, so clamp it back */
-          let mx = s.x + 18 + lane * 9;
+          let mx = s.x + 18 + lane * TRACK;
           const mxOk = x => vClean2(x, s.y, jy, ad, skip)
             && !epTaken(x, jy, skip) && !epTaken(x, s.y, skip);
           while (mx < t.x - 12 && !mxOk(mx)) mx += 9;
@@ -1298,7 +1416,7 @@
         const jys = ts.map(t => t.y + t.below);
         const yMin = Math.min(s.y, Math.min.apply(null, jys));
         const yMax = Math.max(s.y, Math.max.apply(null, jys));
-        let trunkX = s.x + 18 + lane * 9;
+        let trunkX = s.x + 18 + lane * TRACK;
         const minTx = Math.min.apply(null, ts.map(t => t.x));
         const trOk = x => vClean2(x, yMin, yMax, null, skip)
           && !epTaken(x, yMin, skip) && !epTaken(x, yMax, skip) && !epTaken(x, s.y, skip);
@@ -1313,6 +1431,8 @@
           'V ' + f(yMin), 'V ' + f(yMax)));
         ts.forEach((t, k) => {
           const jy = jys[k];
+          const simple = simpleRoute(src, { x: trunkX, y: jy }, t, skip, true);
+          if (simple) { pushWire(src, simple); return; }
           const hr = hRun(trunkX, jy, t.x, skip, cap(t), lane, new Set([t.dst]));
           /* a fully clamped trunk can sit exactly on the tap pin's x, leaving
              no horizontal to route — the trunk vertical already passes through
@@ -1325,86 +1445,79 @@
     });
     curSrc = null;
 
-    /* junction dots: parse routed wires into segments, merge collinear
-       overlapping pieces of the same net into maximal corridors, then dot
-       every point where 3+ branches of one net meet (cross, tee, or a pin
-       tapping a through-corridor). Cross-net crossings are never dotted. */
-    (function addJunctionDots() {
-      const EPS = 0.35;
-      const hSegs = [], vSegs = [];
-      wires.forEach(w => {
+    // Prune only nonterminal leaves, so removing a detour tail cannot disconnect a pin.
+    const cleaned = [];
+    bySrc.forEach((list, src) => {
+      const segments = [], points = new Map();
+      const point = (x, y) => {
+        const key = f(x) + ',' + f(y);
+        if (!points.has(key)) points.set(key, { x: f(x), y: f(y), next: new Set(), terminal: false });
+        return points.get(key);
+      };
+      wires.filter(w => w.src === src).forEach(w => {
         const toks = w.d.split(' ');
-        let x = parseFloat(toks[1]), y = parseFloat(toks[2]);
+        let a = point(+toks[1], +toks[2]);
         for (let i = 3; i + 1 < toks.length; i += 2) {
-          const v = parseFloat(toks[i + 1]);
-          if (toks[i] === 'H') {
-            hSegs.push({ src: w.src, a: Math.min(x, v), b: Math.max(x, v), c: y });
-            x = v;
-          } else {
-            vSegs.push({ src: w.src, a: Math.min(y, v), b: Math.max(y, v), c: x });
-            y = v;
-          }
+          const b = toks[i] === 'H' ? point(+toks[i + 1], a.y) : point(a.x, +toks[i + 1]);
+          if (a !== b) segments.push({ a, b, horizontal: a.y === b.y });
+          a = b;
         }
       });
-      const merge = list => {
-        const byK = new Map();
-        list.forEach(s => {
-          const k = s.src + '|' + (Math.round(s.c * 2) / 2);
-          if (!byK.has(k)) byK.set(k, []);
-          byK.get(k).push(s);
-        });
-        const out = [];
-        byK.forEach(g => {
-          g.sort((p, q) => p.a - q.a);
-          let cur = { src: g[0].src, a: g[0].a, b: g[0].b, c: g[0].c };
-          for (let i = 1; i < g.length; i++) {
-            if (g[i].a - cur.b < 0.6) cur.b = Math.max(cur.b, g[i].b);
-            else { out.push(cur); cur = { src: g[i].src, a: g[i].a, b: g[i].b, c: g[i].c }; }
-          }
-          out.push(cur);
-        });
-        return out;
-      };
-      const mh = merge(hSegs), mv = merge(vSegs);
-      const pts = new Map();
-      const touch = (x, y, n) => {
-        const k = Math.round(x * 4) + ',' + Math.round(y * 4);
-        if (!pts.has(k)) pts.set(k, { x, y, br: 0 });
-        pts.get(k).br += n;
-      };
-      mh.forEach(h => {
-        mv.forEach(v => {
-          if (v.src !== h.src) return;
-          const hEndA = Math.abs(v.c - h.a) < EPS, hEndB = Math.abs(v.c - h.b) < EPS;
-          const vEndA = Math.abs(h.c - v.a) < EPS, vEndB = Math.abs(h.c - v.b) < EPS;
-          if (v.c > h.a + EPS && v.c < h.b - EPS) {
-            if (h.c > v.a + EPS && h.c < v.b - EPS) touch(v.c, h.c, 4);
-            else if (vEndA || vEndB) touch(v.c, h.c, 3);
-          } else if (hEndA || hEndB) {
-            if (h.c > v.a + EPS && h.c < v.b - EPS) touch(v.c, h.c, 3);
-            else {
-              /* attach exactly at the vertical's end = corner (no dot);
-                 a hair past it on a continuing run = tee (dot) */
-              const stub = Math.min(Math.abs(h.c - v.a), Math.abs(h.c - v.b));
-              touch(v.c, h.c, stub > 0.05 ? 3 : 2);
-            }
-          }
+      const source = outPin(src);
+      point(source.x, source.y).terminal = true;
+      list.forEach(e => { point(e.pin.x, e.pin.y).terminal = true; });
+      const contains = (s, p) => s.horizontal
+        ? p.y === s.a.y && p.x >= Math.min(s.a.x, s.b.x) && p.x <= Math.max(s.a.x, s.b.x)
+        : p.x === s.a.x && p.y >= Math.min(s.a.y, s.b.y) && p.y <= Math.max(s.a.y, s.b.y);
+      segments.filter(s => s.horizontal).forEach(h => {
+        segments.filter(s => !s.horizontal).forEach(v => {
+          const p = { x: v.a.x, y: h.a.y };
+          if (contains(h, p) && contains(v, p)) point(p.x, p.y);
         });
       });
-      edges.forEach(e => {
-        mh.forEach(h => {
-          if (h.src === e.src && Math.abs(h.c - e.pin.y) < EPS && h.a + EPS < e.pin.x && e.pin.x < h.b - EPS) {
-            touch(e.pin.x, e.pin.y, 3);
-          }
-        });
-        mv.forEach(v => {
-          if (v.src === e.src && Math.abs(v.c - e.pin.x) < EPS && v.a + EPS < e.pin.y && e.pin.y < v.b - EPS) {
-            touch(e.pin.x, e.pin.y, 3);
-          }
-        });
+      segments.forEach(s => {
+        const ps = [...points.values()].filter(p => contains(s, p));
+        ps.sort((a, b) => s.horizontal ? a.x - b.x : a.y - b.y);
+        for (let i = 1; i < ps.length; i++) {
+          ps[i - 1].next.add(ps[i]);
+          ps[i].next.add(ps[i - 1]);
+        }
       });
-      pts.forEach(p => { if (p.br >= 3) addDot(p.x, p.y); });
-    })();
+      const leaves = [...points.values()].filter(p => !p.terminal && p.next.size === 1);
+      while (leaves.length) {
+        const p = leaves.pop();
+        if (p.next.size !== 1) continue;
+        const q = [...p.next][0];
+        p.next.clear();
+        q.next.delete(p);
+        if (!q.terminal && q.next.size === 1) leaves.push(q);
+      }
+      points.forEach(p => { if (p.next.size >= 3 && !p.terminal) addDot(p.x, p.y); });
+      const drawn = new Map();
+      const seen = (a, b) => drawn.get(a)?.has(b);
+      const mark = (a, b) => {
+        if (!drawn.has(a)) drawn.set(a, new Set());
+        if (!drawn.has(b)) drawn.set(b, new Set());
+        drawn.get(a).add(b);
+        drawn.get(b).add(a);
+      };
+      points.forEach(a => a.next.forEach(b => {
+        if (seen(a, b)) return;
+        const ps = [a, b];
+        mark(a, b);
+        let prev = a, curr = b;
+        while (curr.next.size === 2 && !curr.terminal) {
+          const next = [...curr.next].find(p => p !== prev);
+          if (seen(curr, next)) break;
+          mark(curr, next);
+          ps.push(next);
+          prev = curr;
+          curr = next;
+        }
+        cleaned.push({ src, d: pathData(compactPoints(ps)) });
+      }));
+    });
+    wires.splice(0, wires.length, ...cleaned);
     if (wires.length) svg.push('<path class="gl" d="' + wires.map(w => w.d).join(' ') + '"/>');
     if (dots.length) svg.push('<g>' + dots.map(d => '<circle class="dot" cx="' + f(d[0]) + '" cy="' + f(d[1]) + '" r="2.6"/>').join('') + '</g>');
 
@@ -1479,7 +1592,7 @@
         }
       } else { /* AND family */
         const ra = Math.min(r, bw - 6);
-        s += '<path class="gb" d="M ' + f(x) + ' ' + f(top) + ' L ' + f(x + bw - ra) + ' ' + f(top) + ' A ' + f(ra) + ' ' + f(ra) + ' 0 0 1 ' + f(x + bw - ra) + ' ' + f(top + h) + ' L ' + f(x) + ' ' + f(top + h) + ' Z"/>';
+        s += '<path class="gb" d="M ' + f(x) + ' ' + f(top) + ' L ' + f(x + bw - ra) + ' ' + f(top) + ' A ' + f(ra) + ' ' + f(r) + ' 0 0 1 ' + f(x + bw - ra) + ' ' + f(top + h) + ' L ' + f(x) + ' ' + f(top + h) + ' Z"/>';
       }
       if (g.bubble) {
         s += '<circle class="bb" cx="' + f(x + xo + bw + 5) + '" cy="' + f(yc) + '" r="5"/>';
