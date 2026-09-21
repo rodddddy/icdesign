@@ -288,6 +288,16 @@
 
   /* Inversion under library constraints. */
   function makeNot(b, a, lib) {
+    const nd = b.nodes[a];
+    if (nd.type === 'CONST0') return b.const1();
+    if (nd.type === 'CONST1') return b.const0();
+    if (nd.type === 'INV') return nd.ins[0];
+    if ((nd.type === 'NAND' || nd.type === 'NOR') && nd.ins.every(id => id === nd.ins[0])) return nd.ins[0];
+    const opposite = { AND: 'NAND', NAND: 'AND', OR: 'NOR', NOR: 'OR', XOR: 'XNOR', XNOR: 'XOR' }[nd.type];
+    if (opposite && lib.has(opposite)) {
+      return opposite === 'XOR' || opposite === 'XNOR'
+        ? b[opposite.toLowerCase()](...nd.ins) : b[opposite.toLowerCase()](nd.ins);
+    }
     if (lib.has('INV')) return b.not(a);
     if (lib.has('NAND')) return b.nand([a, a]);
     if (lib.has('NOR')) return b.nor([a, a]);
@@ -356,11 +366,7 @@
       if (ins.length === 1) return makeNot(b, ins[0], lib); // single-literal cube: (L)' stage
       return b.nand(ins);
     });
-    if (firsts.length === 1) {
-      const t = firsts[0];
-      if (t === b.const1()) return b.const1();
-      return b.nand([t, t]); // AND via NAND pair
-    }
+    if (firsts.length === 1) return makeNot(b, firsts[0], lib);
     return b.nand(firsts);
   }
 
@@ -443,7 +449,7 @@
       const x = ids[0];
       if (vals[0] === 0 && vals[1] === 1) out = x;
       else if (lib.has('INV') || lib.has('NAND') || lib.has('NOR')) out = makeNot(b, x, lib);
-      else if (lib.has('MUX')) out = b.mux2(x, b.const1(), b.const0());
+      else if (lib.has('MUX')) out = b.mux2(x, b.const0(), b.const1());
       else { const e = new Error('inversion'); e.needInv = true; throw e; }
     } else if (lib.has('MUX') && ids.length >= 2) {
       const a = ids[0], c = ids[1], rest = ids.slice(2);
@@ -502,45 +508,31 @@
       return { id, path, display: { cubes: chosen, xorTerms: displayTerms } };
     }
 
-    // 1) direct AND/OR
-    if (lib.has('AND') && lib.has('OR')) {
+    const candidates = [];
+    const attempt = (path, build) => {
       try {
-        const id = displayTerms
-          ? buildMergedTerms(b, displayTerms, n, inIds, lib)
-          : cubesToSop(b, chosen, n, inIds, lib);
-        return finish(id, 'two-level AND/OR');
-      } catch (e) { reasons.push('AND/OR mapping: ' + reasonText(e, lib)); }
+        const id = build();
+        const stats = netStats(b.nodes, reachable(b.nodes, [id]), [{ id }]);
+        candidates.push({ id, path, ...stats });
+      } catch (e) { reasons.push(path + ': ' + reasonText(e, lib)); }
+    };
+    if (lib.has('AND') && lib.has('OR')) {
+      attempt('two-level AND/OR', () => cubesToSop(b, chosen, n, inIds, lib));
+      if (displayTerms) attempt('XOR-merged AND/OR', () => buildMergedTerms(b, displayTerms, n, inIds, lib));
+      attempt('complemented AND/OR (De Morgan)', () => makeNot(b, cubesToSop(b, compCubes, n, inIds, lib), lib));
     }
-    // 2) NAND-NAND (NAND alone is complete)
-    if (lib.has('NAND')) {
-      try { return finish(nandPath(b, chosen, n, inIds, lib), 'NAND-NAND'); }
-      catch (e) { reasons.push('NAND mapping: ' + reasonText(e, lib)); }
-    }
-    // 3) NOR-NOR (NOR alone is complete)
-    if (lib.has('NOR')) {
-      try { return finish(norPath(b, compCubes, n, inIds, lib), 'NOR-NOR'); }
-      catch (e) { reasons.push('NOR mapping: ' + reasonText(e, lib)); }
-    }
-    // 4) De Morgan with AND+INV
+    if (lib.has('NAND')) attempt('NAND-NAND', () => nandPath(b, chosen, n, inIds, lib));
+    if (lib.has('NOR')) attempt('NOR-NOR', () => norPath(b, compCubes, n, inIds, lib));
     if (lib.has('AND') && lib.has('INV')) {
-      try { return finish(dmAndPath(b, compCubes, n, inIds, lib), 'AND + INV (De Morgan)'); }
-      catch (e) { reasons.push('AND+INV mapping: ' + reasonText(e, lib)); }
+      attempt('AND + INV (De Morgan)', () => dmAndPath(b, compCubes, n, inIds, lib));
     }
-    // 5) De Morgan with OR+INV
     if (lib.has('OR') && lib.has('INV')) {
-      try { return finish(dmOrPath(b, compCubes, n, inIds, lib), 'OR + INV (De Morgan)'); }
-      catch (e) { reasons.push('OR+INV mapping: ' + reasonText(e, lib)); }
+      attempt('OR + INV (De Morgan)', () => dmOrPath(b, compCubes, n, inIds, lib));
     }
-    // 6) ANF: XOR (+AND for higher-order terms); pure parity works with XOR alone
-    if (lib.has('XOR')) {
-      try { return finish(anfPath(b, on, n, inIds, lib), 'XOR/AND (ANF)'); }
-      catch (e) { reasons.push('XOR/AND mapping: ' + reasonText(e, lib)); }
-    }
-    // 7) MUX tree (uses 4:1 nodes when possible, falls back to 2:1)
-    if (lib.has('MUX')) {
-      try { return finish(muxTree(b, inIds, vals, lib, {}), 'MUX tree'); }
-      catch (e) { reasons.push('MUX mapping: ' + reasonText(e, lib)); }
-    }
+    if (lib.has('XOR')) attempt('XOR/AND (ANF)', () => anfPath(b, on, n, inIds, lib));
+    if (lib.has('MUX')) attempt('MUX tree', () => muxTree(b, inIds, vals, lib, {}));
+    candidates.sort((a, b) => a.gates - b.gates || a.wires - b.wires || a.levels - b.levels);
+    if (candidates.length) return finish(candidates[0].id, candidates[0].path);
 
     // Nothing worked — assemble a helpful message.
     const err = new Error('cannot synthesize');
@@ -756,6 +748,17 @@
       });
     }
 
+    const pinOrder = new Map();
+    ids.forEach(id => {
+      const nd = nodes[id];
+      if (!['AND', 'NAND', 'OR', 'NOR', 'XOR', 'XNOR'].includes(nd.type)) return;
+      const order = nd.ins.map((src, i) => i).sort((a, b) =>
+        pos.get(nd.ins[a]).y - pos.get(nd.ins[b]).y || a - b);
+      const slots = [];
+      order.forEach((index, slot) => { slots[index] = slot; });
+      pinOrder.set(id, slots);
+    });
+
     function dataPinCount(nd) {
       return nd.type === 'MUX' ? nd.ins.length - muxSelCount(nd) : nd.ins.length;
     }
@@ -781,11 +784,11 @@
         return { x: p.x, y: f(p.y + ys[i - nSel]) };
       }
       const ys = pinYs(nd.type, nd.ins.length);
+      i = pinOrder.has(id) ? pinOrder.get(id)[i] : i;
       let px = p.x;
       if (isOrType(nd.type)) {
-        /* land exactly on the concave back arc x = xb + 2t(1-t)*0.34bw */
         const t = 0.5 - ys[i] / p.h;
-        px = p.x + (g.xorCurve ? 10 : 0) + 2 * t * (1 - t) * 0.34 * g.w;
+        px = p.x + 2 * t * (1 - t) * 0.34 * g.w;
       }
       /* snap to the rendered 0.1 grid — the router's 0.4px clearances are
          checked against these values but the SVG only shows the rounded
@@ -850,10 +853,39 @@
       labelBoxes.push({ ...box, x2: p.x - 2, input: id });
     });
 
+    const outputX = Math.max(colX(maxLevel), ...ids.map(id => pos.get(id).x + pos.get(id).w))
+      + Math.max(96, (roots.length + 2) * TRACK);
+    let constantY = Math.max(topMargin, ...ids.filter(id => pos.get(id).gate)
+      .map(id => pos.get(id).y + pos.get(id).h / 2 + 20)) + 48;
+    const constantOutputs = lv0.filter(id => rootIds.has(id) && !consumers.get(id).length
+      && nodes[id].type.startsWith('CONST'));
+    constantOutputs.forEach(id => {
+      Object.assign(pos.get(id), { x: outputX - 64, y: constantY });
+      constantY += 48;
+    });
+    const outputPorts = roots.map((r, i) => ({ src: r.id, dst: nodes.length + i, label: r.label }))
+      .sort((a, b) => outPin(a.src).y - outPin(b.src).y || a.src - b.src || a.dst - b.dst);
+    const outputCounts = new Map();
+    outputPorts.forEach(port => outputCounts.set(port.src, (outputCounts.get(port.src) || 0) + 1));
+    const outputIndex = new Map();
+    let outputY = 24;
+    outputPorts.forEach(port => {
+      const index = outputIndex.get(port.src) || 0;
+      outputIndex.set(port.src, index + 1);
+      const y = f(Math.max(outputY, outPin(port.src).y - (outputCounts.get(port.src) - 1) * 24 + index * 48));
+      pos.set(port.dst, { x: outputX, y, w: 0, h: 20, output: true });
+      labelBoxes.push({ x1: outputX + 7, x2: outputX + 14 + port.label.length * 7.5, y1: y - 10, y2: y + 12 });
+      outputY = y + 48;
+    });
+    constantOutputs.forEach(id => {
+      const ys = outputPorts.filter(port => port.src === id).map(port => pos.get(port.dst).y);
+      pos.get(id).y = f((ys[0] + ys[ys.length - 1]) / 2);
+    });
+
     /* canvas size */
     let maxY = 0;
     pos.forEach(p => maxY = Math.max(maxY, p.y + p.h / 2 + (p.gate ? 16 : 0)));
-    const width = colX(maxLevel) + 150 + 90;
+    const width = outputX + Math.max(90, ...roots.map(r => r.label.length * 7.5 + 20));
     const height = maxY + 40;
 
     const svg = [];
@@ -873,6 +905,10 @@
         if (!reach.has(src)) return;
         edges.push({ src, dst: id, pin: inPin(id, i) });
       });
+    });
+    outputPorts.forEach(port => {
+      const p = pos.get(port.dst);
+      edges.push({ src: port.src, dst: port.dst, pin: { x: p.x, y: p.y } });
     });
     const bySrc = new Map();
     edges.forEach(e => {
@@ -932,9 +968,9 @@
        de-confliction) */
     const usedH = [];
     const usedV = [];
-    rootIds.forEach(src => {
-      const pin = outPin(src);
-      usedH.push({ src, y: f(pin.y), x1: f(pin.x), x2: f(pin.x + 14) });
+    outputPorts.forEach(port => {
+      const pin = pos.get(port.dst);
+      usedH.push({ src: port.src, y: pin.y, x1: pin.x - 14, x2: pin.x });
     });
     let curSrc = null;
     const registerWire = (src, d) => {
@@ -1436,8 +1472,7 @@
           if (Math.abs(Y - t.y) > 0.05 && !t.below) {
             let xr = null;
             const p = pos.get(t.dst);
-            const tp = nodes[t.dst].type;
-            const fam = tp === 'OR' || tp === 'NOR' || tp === 'XOR' || tp === 'XNOR';
+            const fam = !p.output && isOrType(nodes[t.dst].type);
             /* fine descending scan — the shortest clean stub wins; a strided
                grid misses valid slots, e.g. when a corridor row ends just
                off the pin row so exactly one landing x keeps clearance from
@@ -1473,9 +1508,12 @@
         const jys = ts.map(t => t.y + t.below);
         const yMin = Math.min(s.y, Math.min.apply(null, jys));
         const yMax = Math.max(s.y, Math.max.apply(null, jys));
-        let trunkX = s.x + 18 + lane * TRACK;
         const minTx = Math.min.apply(null, ts.map(t => t.x));
+        let trunkX = list.every(e => pos.get(e.dst).output)
+          ? Math.max(s.x + 18, minTx - 36 - lane * TRACK) : s.x + 18 + lane * TRACK;
         const trOk = x => vClean2(x, yMin, yMax, null, skip)
+          && !usedV.some(u => u.src !== src && Math.abs(u.x - x) < TRACK
+            && Math.min(yMax, u.y2) - Math.max(yMin, u.y1) > 0.1)
           && !epTaken(x, yMin, skip) && !epTaken(x, yMax, skip) && !epTaken(x, s.y, skip);
         while (trunkX < minTx - 12 && !trOk(trunkX)) trunkX += 9;
         if (trunkX > minTx - 12 || !trOk(trunkX)) {
@@ -1592,27 +1630,10 @@
       }
     });
 
-    /* output labels: a root with fanout is already spanned by its net wire
-       (terminal circle sits on the initial horizontal), so only roots with
-       no fanout get the 14px stub. Identical output functions hash-cons to
-       one node — draw that terminal once and stack the duplicate labels. */
-    const drawnRoot = new Map();
-    roots.forEach(r => {
-      const p = pos.get(r.id);
-      if (!p) return;
-      const k = drawnRoot.get(r.id) || 0;
-      drawnRoot.set(r.id, k + 1);
-      if (k > 0) {
-        const op2 = outPin(r.id);
-        svg.push('<text x="' + f(op2.x + 24) + '" y="' + f(op2.y + 4 + k * 14) + '" class="olbl">' + esc(r.label) + '</text>');
-        return;
-      }
-      const op = outPin(r.id);
-      if (!bySrc.has(r.id)) {
-        svg.push('<line class="gl" x1="' + f(op.x) + '" y1="' + f(op.y) + '" x2="' + f(op.x + 14) + '" y2="' + f(op.y) + '"/>');
-      }
-      svg.push('<circle class="term" cx="' + f(op.x + 14) + '" cy="' + f(op.y) + '" r="3.2"/>');
-      svg.push('<text x="' + f(op.x + 24) + '" y="' + f(op.y + 4) + '" class="olbl">' + esc(r.label) + '</text>');
+    outputPorts.forEach(port => {
+      const p = pos.get(port.dst);
+      svg.push('<circle class="term" cx="' + p.x + '" cy="' + p.y + '" r="3.2"/>');
+      svg.push('<text x="' + (p.x + 10) + '" y="' + (p.y + 4) + '" class="olbl">' + esc(port.label) + '</text>');
     });
 
     svg.push('</svg>');
@@ -1689,7 +1710,7 @@
   if (typeof document === 'undefined') return;
 
   const MAX_IO = 8;
-  const GATE_LIST = ['NAND', 'NOR', 'INV', 'BUF', 'AND', 'OR', 'XOR', 'XNOR', 'MUX'];
+  const GATE_LIST = ['NAND', 'NOR', 'INV', 'AND', 'OR', 'XOR', 'XNOR'];
 
   const state = {
     inputs: ['A', 'B'],
