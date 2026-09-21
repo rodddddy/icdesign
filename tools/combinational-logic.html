@@ -52,8 +52,12 @@
     <section class="panel">
       <h2><span class="step-num">2</span>Gate library</h2>
       <p class="hint">The generator will only use the selected gate types. At least one
-         functionally complete set is required (e.g. NAND alone, NOR alone, MUX alone,
-         AND+OR+INV, AND+XOR, &hellip;).</p>
+         functionally complete set is required (e.g. NAND alone, NOR alone, AND+OR+INV,
+         AND+XOR, &hellip;).</p>
+      <div class="chipbar">
+        <button class="link-btn" id="select-all-gates" type="button">Select all</button>
+        <button class="link-btn" id="clear-gates" type="button">Select none</button>
+      </div>
       <div class="gate-chips" id="gate-chips"></div>
     </section>
 
@@ -64,6 +68,9 @@
          starts at <code>0</code> &mdash; click it to toggle between <code>0</code> and <code>1</code>.</p>
       <p class="hint" id="tt-hint"></p>
       <div id="tt-container"></div>
+      <div class="chipbar">
+        <button class="link-btn" id="dl-excel" type="button">Export Excel (.csv)</button>
+      </div>
     </section>
 
     <div class="generate-bar">
@@ -83,7 +90,8 @@
       <div class="circuit-box" id="circuit-box"></div>
       <div class="circuit-toolbar">
         <button class="link-btn" id="dl-svg" type="button">Download SVG</button>
-        <span class="tt-meta">Tip: open the SVG in a new tab for a full-resolution view.</span>
+        <button class="link-btn" id="dl-png" type="button">Download PNG</button>
+        <span class="tt-meta">Tip: SVG scales without quality loss; PNG is exported at 2× resolution.</span>
       </div>
     </section>
   </main>

@@ -1713,8 +1713,8 @@
   const GATE_LIST = ['NAND', 'NOR', 'INV', 'AND', 'OR', 'XOR', 'XNOR'];
 
   const state = {
-    inputs: ['A', 'B'],
-    outputs: ['F'],
+    inputs: ['IN1', 'IN2'],
+    outputs: ['OUT1'],
     vals: [],   // vals[row][outIdx], '0'|'1'
     nRows: 0
   };
@@ -1729,8 +1729,12 @@
     rebuildTable(true);
     $('#add-in').addEventListener('click', () => addSignal('in'));
     $('#add-out').addEventListener('click', () => addSignal('out'));
+    $('#select-all-gates').addEventListener('click', () => setGateSelection(true));
+    $('#clear-gates').addEventListener('click', () => setGateSelection(false));
+    $('#dl-excel').addEventListener('click', downloadExcel);
     $('#generate').addEventListener('click', onGenerate);
     $('#dl-svg').addEventListener('click', downloadSvg);
+    $('#dl-png').addEventListener('click', downloadPng);
   }
 
   /* ---- gate chips ---- */
@@ -1753,6 +1757,9 @@
       if (el && el.checked) lib.add(g);
     });
     return lib;
+  }
+  function setGateSelection(checked) {
+    GATE_LIST.forEach(g => { $('#gate-' + g).checked = checked; });
   }
 
   /* ---- signal editors ---- */
@@ -1793,7 +1800,7 @@
     const arr = kind === 'in' ? state.inputs : state.outputs;
     if (arr.length >= MAX_IO) return;
     const base = kind === 'in' ? 'IN' : 'OUT';
-    let i = arr.length;
+    let i = arr.length + 1;
     let name = base + i;
     while (arr.includes(name)) { i++; name = base + i; }
     arr.push(name);
@@ -2015,16 +2022,63 @@
     box.innerHTML = '';
   }
 
+  function downloadExcel() {
+    syncValsFromDom();
+    const quote = value => {
+      const text = String(value);
+      const safe = /^\s*[=+\-@]/.test(text) ? "'" + text : text;
+      return '"' + safe.replace(/"/g, '""') + '"';
+    };
+    const rows = [[...state.inputs, ...state.outputs]];
+    state.vals.forEach((values, row) => {
+      rows.push([...bitsOf(row, state.inputs.length), ...values]);
+    });
+    const csv = '\uFEFF' + rows.map(row => row.map(quote).join(',')).join('\r\n');
+    downloadBlob(new Blob([csv], { type: 'text/csv;charset=utf-8' }), 'truth-table.csv');
+  }
+
   function downloadSvg() {
     if (!lastResult) return;
     const rendered = renderSvg(lastResult.builder, lastResult.roots, lastResult.inNames, { forDownload: true });
-    const blob = new Blob([rendered.svg], { type: 'image/svg+xml' });
+    downloadBlob(new Blob([rendered.svg], { type: 'image/svg+xml' }), 'circuit.svg');
+  }
+
+  function downloadPng() {
+    if (!lastResult) return;
+    const rendered = renderSvg(lastResult.builder, lastResult.roots, lastResult.inNames, { forDownload: true });
+    const svgUrl = URL.createObjectURL(new Blob([rendered.svg], { type: 'image/svg+xml' }));
+    const image = new Image();
+    image.onload = () => {
+      const scale = 2;
+      const canvas = document.createElement('canvas');
+      canvas.width = rendered.width * scale;
+      canvas.height = rendered.height * scale;
+      const context = canvas.getContext('2d');
+      context.fillStyle = '#ffffff';
+      context.fillRect(0, 0, canvas.width, canvas.height);
+      context.drawImage(image, 0, 0, canvas.width, canvas.height);
+      URL.revokeObjectURL(svgUrl);
+      canvas.toBlob(blob => {
+        if (blob) downloadBlob(blob, 'circuit.png');
+        else showError('PNG export failed', 'The circuit image could not be encoded.');
+      }, 'image/png');
+    };
+    image.onerror = () => {
+      URL.revokeObjectURL(svgUrl);
+      showError('PNG export failed', 'The circuit image could not be rendered.');
+    };
+    image.src = svgUrl;
+  }
+
+  function downloadBlob(blob, filename) {
     const url = URL.createObjectURL(blob);
     const a = document.createElement('a');
     a.href = url;
-    a.download = 'circuit.svg';
+    a.download = filename;
+    document.body.appendChild(a);
     a.click();
-    URL.revokeObjectURL(url);
+    a.remove();
+    setTimeout(() => URL.revokeObjectURL(url), 1000);
   }
 
   if (document.readyState === 'loading') {
