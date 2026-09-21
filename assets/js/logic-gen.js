@@ -808,12 +808,46 @@
       return { x: p.x + p.w, y: p.y };
     }
 
-    lv0.forEach(id => {
-      const next = consumers.get(id);
-      if (nodes[id].type !== 'IN' || next.length !== 1) return;
-      const dst = next[0], pin = inPin(dst, nodes[dst].ins.indexOf(id));
-      if (pin.below || lv0.some(other => other !== id && Math.abs(pos.get(other).y - pin.y) < 14)) return;
-      pos.get(id).y = pin.y;
+    const labelBoxes = [];
+    ids.forEach(id => {
+      const p = pos.get(id), nd = nodes[id];
+      if (!p.gate || nd.type === 'MUX' || nd.type === 'BUF') return;
+      const cx = f(p.x + p.w / 2), baseline = f(p.y + p.h / 2 + 14);
+      const half = nd.type.length * 3 + 4;
+      labelBoxes.push({ x1: cx - half, x2: cx + half, y1: baseline - 13, y2: baseline + 6 });
+    });
+    const inputBox = (id, x, y) => ({
+      x1: x - 10 - nodes[id].label.length * 7.5, x2: x + 10, y1: y - 7, y2: y + 7
+    });
+    const overlaps = (a, b) => a.x1 < b.x2 && a.x2 > b.x1 && a.y1 < b.y2 && a.y2 > b.y1;
+    inOrder.forEach(id => {
+      const p = pos.get(id), next = [...new Set(consumers.get(id))];
+      if (!next.length || rootIds.has(id)) return;
+      const pins = next.flatMap(dst => nodes[dst].ins.flatMap((src, i) => src === id
+        ? [{ ...inPin(dst, i), dst }] : []));
+      const nearX = Math.min(...next.map(dst => pos.get(dst).x));
+      const ys = [...new Set([p.y, ...pins.filter(pin => !pin.below).map(pin => pin.y)])];
+      const candidates = [];
+      for (const y of ys) {
+        const box = inputBox(id, p.x, y);
+        if (labelBoxes.some(b => overlaps(box, b))) continue;
+        if (ids.some(other => {
+          if (other === id) return false;
+          const q = pos.get(other);
+          return overlaps(box, nodes[other].type === 'IN' ? inputBox(other, q.x, q.y)
+            : { x1: q.x - 8, x2: q.x + q.w + 8, y1: q.y - q.h / 2 - 8, y2: q.y + q.h / 2 + 8 });
+        })) continue;
+        const score = pins.reduce((sum, pin) => sum
+          + Math.abs(pin.y + (pin.below || 0) - y) * (pin.x < nearX + 20 ? 2 : 1), 0)
+          + Math.abs(y - p.y) * 0.1;
+        candidates.push({ y, score });
+      }
+      candidates.sort((a, b) => a.score - b.score);
+      if (candidates.length) p.y = candidates[0].y;
+    });
+    inOrder.forEach(id => {
+      const p = pos.get(id), box = inputBox(id, p.x, p.y);
+      labelBoxes.push({ ...box, x2: p.x - 2, input: id });
     });
 
     /* canvas size */
@@ -876,15 +910,19 @@
         const gy1 = p.y - p.h / 2, gy2 = p.y + p.h / 2;
         if (y > gy1 - 8 && y < gy2 + 8
           && p.x + p.w > x1 + 0.1 && p.x < x2 - 0.1) {
-          rs.push([p.x - 8, gy1 - 12]);
+          rs.push([p.x - 8, gy1 - 12, p.x + p.w + 8]);
         }
+      });
+      labelBoxes.forEach(b => {
+        if (y > b.y1 && y < b.y2 && b.x2 > x1 + 0.1 && b.x1 < x2 - 0.1)
+          rs.push([b.x1 - 8, b.y1 - 12, b.x2 + 8]);
       });
       if (skip) {
         for (let k = 0; k < pinPts.length; k++) {
           const q = pinPts[k];
           if (skip.has(q.dst)) continue;
           if (Math.abs(q.y - y) < 0.5 && q.x > x1 + 6 && q.x < x2 - 16) {
-            rs.push([q.x - 8, y - 12]);
+            rs.push([q.x - 8, y - 12, q.x + 8]);
           }
         }
       }
@@ -916,6 +954,7 @@
     /* vertical at x between y1..y2 must not cross a gate body */
     const vCleanG = (vx, y1, y2, allowDst) => {
       const lo = Math.min(y1, y2), hi = Math.max(y1, y2);
+      if (labelBoxes.some(b => vx > b.x1 && vx < b.x2 && Math.min(hi, b.y2) - Math.max(lo, b.y1) > 0.1)) return false;
       for (let i = 0; i < ids.length; i++) {
         const id = ids[i], p = pos.get(id), nd = nodes[id];
         if (!p || nd.type === 'IN') continue;
@@ -1106,24 +1145,8 @@
           const riseX = Math.max(L.x1, Math.min.apply(null, rs.map(r => r[0])) - lane * TRACK);
           const dy0 = Math.max(8, Math.min.apply(null, rs.map(r => r[1])) - lane * TRACK);
           let drX = Math.min(L.x2 - 14, dropX == null ? Infinity : dropX) - lane * TRACK;
-          /* the corridor must cover every gate blocking this row — a drop
-             x inside a blocker's span leaves the return leg slicing through
-             the gate body (e.g. leg 240..340 blocked by gate 266..326 with
-             drX=308 ends up re-entering the body from 308 to 326) */
-          const bg = [];
-          ids.forEach(id => {
-            const p = pos.get(id), nd = nodes[id];
-            if (!p || nd.type === 'IN') return;
-            if (allowDst && allowDst.has(id)) return;
-            const gy1 = p.y - p.h / 2, gy2 = p.y + p.h / 2;
-            if (L.y > gy1 - 8 && L.y < gy2 + 8
-              && p.x + p.w > L.x1 + 0.1 && p.x < L.x2 - 0.1) bg.push(p);
-          });
-          if (bg.length) {
-            const gR = Math.max.apply(null, bg.map(p => p.x + p.w));
-            if (drX < gR + 4) drX = gR + 4;
-            if (drX > L.x2 - 0.5) drX = L.x2;
-          }
+          // Returning before a blocker's right edge would cut through its body or label.
+          drX = Math.min(L.x2, Math.max(drX, ...rs.map(r => r[2])));
           if (drX < riseX) drX = riseX;
           if (drX - riseX < 3) continue; /* no room for a corridor here */
           /* corridor rows must stay visually clear of every gate bbox —
@@ -1230,7 +1253,32 @@
     /* join path fragments, dropping empties so no dangling/blank commands
        ever reach the SVG path parser */
     const dstr = (...parts) => parts.filter(p => p && p.trim()).join(' ');
-    const pushWire = (src, d) => { wires.push({ src, d }); registerWire(src, d); };
+    const pushWire = (src, d) => {
+      if (nodes[src].type === 'IN' && bySrc.get(src).length === 1 && !rootIds.has(src)) {
+        const t = d.split(' '), p = pos.get(src), x = f(p.x + 6);
+        if (t[3] === 'H' && t[5] === 'V' && t[7] === 'H' && +t[4] > x && +t[8] > +t[4]) {
+          const y = +t[6], endX = +t[4], box = inputBox(src, p.x, y);
+          const clear = y >= 14 && y <= height - 14
+            && !labelBoxes.some(b => b.input !== src && overlaps(box, b))
+            && !hBlockers(y, x, endX).length
+            && !pinPts.some(q => Math.abs(q.y - y) < 4 && q.x >= x - 4 && q.x <= endX + 4)
+            && !usedH.some(u => u.src !== src && (
+              overlaps(box, { x1: u.x1, x2: u.x2, y1: u.y - 1, y2: u.y + 1 })
+              || (Math.abs(u.y - y) < 8 && u.x2 >= x && u.x1 <= endX)))
+            && !usedV.some(u => u.src !== src && (
+              overlaps(box, { x1: u.x - 1, x2: u.x + 1, y1: u.y1, y2: u.y2 })
+              || (u.x >= x && u.x <= endX && y >= u.y1 && y <= u.y2
+                && Math.min(u.x - x, endX - u.x, y - u.y1, u.y2 - y) < 4)));
+          if (clear) {
+            p.y = y;
+            Object.assign(labelBoxes.find(b => b.input === src), { ...box, x2: p.x - 2 });
+            d = dstr('M ' + x + ' ' + y, t.slice(7).join(' '));
+          }
+        }
+      }
+      wires.push({ src, d });
+      registerWire(src, d);
+    };
     const compactPoints = points => {
       const out = [];
       points.forEach(p => {
@@ -1289,6 +1337,14 @@
           }
           if (epTaken(b.x, b.y, skip)) return;
           length += hi - lo;
+          if (branch) {
+            const covered = (horizontal ? usedH : usedV)
+              .filter(u => u.src === src && Math.abs((horizontal ? u.y - a.y : u.x - a.x)) < 0.05)
+              .map(u => [Math.max(lo, horizontal ? u.x1 : u.y1), Math.min(hi, horizontal ? u.x2 : u.y2)])
+              .filter(([l, r]) => r > l).sort((u, v) => u[0] - v[0]);
+            let end = lo;
+            covered.forEach(([l, r]) => { length -= Math.max(0, r - Math.max(l, end)); end = Math.max(end, r); });
+          }
         }
         candidates.push({ ps, score: (ps.length - 2) * 80 + length + crossings * 12 });
       };
@@ -1305,6 +1361,7 @@
           rows.add(p.y - p.h / 2 - 18);
           rows.add(p.y + p.h / 2 + (p.gate ? 30 : 18));
         });
+        labelBoxes.forEach(b => { rows.add(b.y1 - 8); rows.add(b.y2 + 8); });
         for (let y = 12; y < topMargin; y += TRACK) rows.add(y);
         const riseXs = xs.slice(0, 5), dropXs = xs.slice(-5);
         for (const y of rows) {
