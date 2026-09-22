@@ -165,18 +165,31 @@ footer.site-footer {
 .btn-add:hover { color: var(--accent); border-color: var(--accent); }
 
 .gate-chips { display: flex; flex-wrap: wrap; gap: 10px; margin-top: 16px; }
-.gate-chip { position: relative; }
-.gate-chip input { position: absolute; opacity: 0; pointer-events: none; }
-.gate-chip label {
-  display: inline-block; padding: 8px 16px; border-radius: 999px; cursor: pointer;
-  border: 1px solid var(--border-strong); background: var(--bg-soft);
-  font-family: var(--mono); font-size: 13px; color: var(--muted);
-  transition: all 0.15s; user-select: none;
+.gate-chip { width: 120px; flex: none; font-family: var(--mono); }
+.gate-type { position: relative; display: block; text-align: center; cursor: pointer; user-select: none; }
+.gate-type input { position: absolute; opacity: 0; width: 1px; height: 1px; margin: 0; }
+.gate-type span {
+  display: block; padding: 7px 8px; border: 1px solid var(--border-strong); border-radius: 999px;
+  background: var(--bg-soft); color: var(--muted); font-size: 13px; line-height: 16px;
+  transition: background 0.15s, border-color 0.15s, color 0.15s;
 }
-.gate-chip input:checked + label {
+.gate-type:hover span { color: var(--text); border-color: var(--accent); }
+.gate-type input:checked + span,
+.gate-type input:indeterminate + span {
   color: var(--accent); border-color: var(--accent); background: var(--accent-soft);
-  box-shadow: 0 0 12px rgba(34, 211, 238, 0.15);
+  box-shadow: 0 0 10px rgba(34, 211, 238, 0.12);
 }
+.gate-type input:focus-visible + span { outline: 2px solid var(--accent); outline-offset: 3px; }
+.gate-inputs { display: flex; justify-content: center; gap: 8px; margin-top: 4px; }
+.gate-input-option {
+  display: inline-flex; align-items: center; gap: 4px; min-height: 24px;
+  color: var(--muted); font-size: 12px; cursor: pointer; user-select: none;
+}
+.gate-input-option:hover { color: var(--text); }
+.gate-input-option input { width: 12px; height: 12px; margin: 0; accent-color: var(--accent); cursor: pointer; }
+.gate-input-option input:checked + span { color: var(--accent); }
+.gate-input-option input:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+.gate-unary { margin-top: 4px; line-height: 24px; text-align: center; color: var(--muted); font-size: 11px; }
 .chipbar { display: flex; gap: 10px; flex-wrap: wrap; margin-top: 14px; }
 .link-btn {
   background: none; border: none; color: var(--muted); font-size: 12.5px;

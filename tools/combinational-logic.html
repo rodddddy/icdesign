@@ -51,9 +51,11 @@
     <!-- Step 2: gate library -->
     <section class="panel">
       <h2><span class="step-num">2</span>Gate library</h2>
-      <p class="hint">The generator will only use the selected gate types. At least one
-         functionally complete set is required (e.g. NAND alone, NOR alone, AND+OR+INV,
-         AND+XOR, &hellip;).</p>
+      <p class="hint">Choose gate types and allowed input counts: <strong>2, 3 and/or 4 inputs</strong>
+         for each type, all selected by default. INV always has 1 input.
+         Click a gate name to toggle all its input counts.</p>
+      <p class="hint">Only selected types and counts are used. Larger functions are split across gates;
+         spare pins may use repeated signals or constants. Multi-input XNOR is the inverse of XOR parity.</p>
       <div class="chipbar">
         <button class="link-btn" id="select-all-gates" type="button">Select all</button>
         <button class="link-btn" id="clear-gates" type="button">Select none</button>

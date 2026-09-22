@@ -200,9 +200,33 @@
     const sortedKey = (p, ins) => p + ':' + ins.slice().sort((a, b) => a - b).join(',');
     const isC0 = id => nodes[id].type === 'CONST0';
     const isC1 = id => nodes[id].type === 'CONST1';
+    const parity = (ins, inverted) => {
+      const odd = new Set();
+      ins.forEach(id => {
+        if (isC0(id)) return;
+        if (isC1(id)) { inverted = !inverted; return; }
+        if (odd.has(id)) odd.delete(id);
+        else odd.add(id);
+      });
+      const list = [...odd].sort((a, b) => a - b);
+      if (!list.length) return inverted ? api.const1() : api.const0();
+      if (list.length === 1) return inverted ? api.not(list[0]) : list[0];
+      const type = inverted ? 'XNOR' : 'XOR';
+      const k = sortedKey(type.toLowerCase(), list);
+      let id = keyOf(k);
+      if (id == null) { id = reg(type, list); memo[k] = id; }
+      return id;
+    };
 
     const api = {
       nodes,
+      gate(type, ins) {
+        const list = type === 'MUX' ? ins.slice() : ins.slice().sort((a, b) => a - b);
+        const k = 'physical:' + type + ':' + list.join(',');
+        let id = keyOf(k);
+        if (id == null) { id = reg(type, list); memo[k] = id; }
+        return id;
+      },
       input(name) {
         let id = keyOf('in:' + name);
         if (id == null) { id = reg('IN', [], { label: name }); memo['in:' + name] = id; }
@@ -239,22 +263,8 @@
         if (id == null) { id = reg('OR', list.slice().sort((a, b) => a - b)); memo[k] = id; }
         return id;
       },
-      xor(a, b) {
-        if (a === b) return api.const0();
-        if (isC0(a)) return b;
-        if (isC0(b)) return a;
-        const lo = Math.min(a, b), hi = Math.max(a, b);
-        let id = keyOf('xor:' + lo + ',' + hi);
-        if (id == null) { id = reg('XOR', [lo, hi]); memo['xor:' + lo + ',' + hi] = id; }
-        return id;
-      },
-      xnor(a, b) {
-        if (a === b) return api.const1();
-        const lo = Math.min(a, b), hi = Math.max(a, b);
-        let id = keyOf('xnor:' + lo + ',' + hi);
-        if (id == null) { id = reg('XNOR', [lo, hi]); memo['xnor:' + lo + ',' + hi] = id; }
-        return id;
-      },
+      xor(...ins) { return parity(ins, false); },
+      xnor(...ins) { return parity(ins, true); },
       nand(ins) {
         if (ins.length === 1) return api.not(ins[0]);
         const k = sortedKey('nand', ins);
@@ -301,6 +311,8 @@
     if (lib.has('INV')) return b.not(a);
     if (lib.has('NAND')) return b.nand([a, a]);
     if (lib.has('NOR')) return b.nor([a, a]);
+    if (lib.has('XOR')) return b.xor(a, b.const1());
+    if (lib.has('XNOR')) return b.xnor(a, b.const0());
     const err = new Error('inversion');
     err.needInv = true;
     throw err;
@@ -420,24 +432,18 @@
   function anfPath(b, on, n, inIds, lib) {
     const total = 1 << n;
     const c = anfCoefficients(on, n);
-    let acc = c[0] ? b.const1() : null;
+    const terms = [];
     for (let m = 1; m < total; m++) {
       if (!c[m]) continue;
       const vars = [];
       for (let j = 0; j < n; j++) if (m & (1 << (n - 1 - j))) vars.push(inIds[j]);
-      let term;
-      if (vars.length === 1) term = vars[0];
+      if (vars.length === 1) terms.push(vars[0]);
       else {
         if (!lib.has('AND')) { const e = new Error('need AND'); e.need = 'AND'; throw e; }
-        term = b.and(vars);
-      }
-      if (acc == null) acc = term;
-      else {
-        if (!lib.has('XOR')) { const e = new Error('need XOR'); e.need = 'XOR'; throw e; }
-        acc = b.xor(acc, term);
+        terms.push(b.and(vars));
       }
     }
-    return acc == null ? b.const0() : acc;
+    return c[0] ? b.xnor(...terms) : b.xor(...terms);
   }
 
   function muxTree(b, ids, vals, lib, memo) {
@@ -474,8 +480,107 @@
     return out;
   }
 
+  function mapGateInputs(b, root, lib, gateInputs) {
+    const sizes = new Map();
+    lib.forEach(type => {
+      if (type === 'INV' || type === 'MUX') return;
+      const allowed = gateInputs[type] || [2, 3, 4];
+      const counts = [2, 3, 4].filter(n => allowed.includes(n));
+      if (!counts.length) throw new Error('Select at least one input count for ' + type + '.');
+      sizes.set(type, counts);
+    });
+    const emit = (type, ins) => {
+      const count = sizes.get(type)?.find(n => n >= ins.length);
+      if (!count) throw new Error('No selected ' + type + ' input count can fit this gate.');
+      const pins = ins.slice();
+      while (pins.length < count) pins.push(ins[ins.length - 1]);
+      return b.gate(type, pins);
+    };
+    const invert = id => {
+      const nd = b.nodes[id];
+      if (nd.type === 'CONST0') return b.const1();
+      if (nd.type === 'CONST1') return b.const0();
+      if (nd.type === 'INV') return nd.ins[0];
+      if (lib.has('INV')) return b.gate('INV', [id]);
+      if (sizes.has('NAND')) return emit('NAND', [id]);
+      if (sizes.has('NOR')) return emit('NOR', [id]);
+      for (const type of ['XOR', 'XNOR']) {
+        if (!sizes.has(type)) continue;
+        const pins = [id];
+        if (type === 'XOR') pins.push(b.const1());
+        while (pins.length < sizes.get(type)[0]) pins.push(b.const0());
+        return b.gate(type, pins);
+      }
+      const e = new Error('inversion'); e.needInv = true; throw e;
+    };
+    const logic = (base, ins, inverted) => {
+      const list = [...new Set(ins)];
+      if (list.length === 1) return inverted ? invert(list[0]) : list[0];
+      const negative = base === 'AND' ? 'NAND' : 'NOR';
+      const desired = inverted ? negative : base;
+      const finalType = sizes.has(desired) ? desired : (inverted ? base : negative);
+      const innerType = sizes.has(base) ? base : negative;
+      if (!sizes.has(finalType) || !sizes.has(innerType)) throw new Error('No selected gate can implement ' + base + '.');
+      const finalMax = Math.max(...sizes.get(finalType));
+      const innerMax = Math.max(...sizes.get(innerType));
+      while (list.length > finalMax) {
+        const count = Math.min(innerMax, list.length - finalMax + 1);
+        let id = emit(innerType, list.splice(0, count));
+        // NAND/NOR stages must be inverted before feeding the next associative stage.
+        if (innerType !== base) id = invert(id);
+        list.push(id);
+      }
+      const id = emit(finalType, list);
+      return finalType === desired ? id : invert(id);
+    };
+    const parity = (ins, inverted) => {
+      const list = ins.slice();
+      if (list.length === 1) return inverted ? invert(list[0]) : list[0];
+      const forms = [];
+      for (const type of ['XOR', 'XNOR']) {
+        (sizes.get(type) || []).forEach(count => forms.push({ type, count }));
+      }
+      if (!forms.length) throw new Error('Select XOR or XNOR to implement parity.');
+      const stage = forms.slice().sort((a, c) => c.count - a.count)[0];
+      while (list.length > stage.count) {
+        const count = Math.min(stage.count, list.length - stage.count + 1);
+        const pins = list.splice(0, count);
+        while (pins.length < stage.count) pins.push(b.const0());
+        list.push(b.gate(stage.type, pins));
+        // Each intermediate XNOR flips parity once, regardless of its input count.
+        if (stage.type === 'XNOR') inverted = !inverted;
+      }
+      const choices = forms.filter(form => form.count >= list.length).map(form => ({
+        ...form,
+        flip: (form.type === 'XNOR') !== inverted,
+        extra: (form.type === 'XNOR') !== inverted && form.count === list.length ? 1 : 0
+      })).sort((a, c) => a.extra - c.extra || a.count - c.count);
+      const best = choices[0], pins = list.slice();
+      if (best.flip && !best.extra) pins.push(b.const1());
+      while (pins.length < best.count) pins.push(b.const0());
+      const id = b.gate(best.type, pins);
+      return best.extra ? invert(id) : id;
+    };
+    const mapped = new Map();
+    const visit = id => {
+      if (mapped.has(id)) return mapped.get(id);
+      const nd = b.nodes[id];
+      const ins = nd.ins.map(visit);
+      let result;
+      if (nd.type === 'IN' || nd.type.startsWith('CONST')) result = id;
+      else if (nd.type === 'INV') result = invert(ins[0]);
+      else if (nd.type === 'AND' || nd.type === 'NAND') result = logic('AND', ins, nd.type === 'NAND');
+      else if (nd.type === 'OR' || nd.type === 'NOR') result = logic('OR', ins, nd.type === 'NOR');
+      else if (nd.type === 'XOR' || nd.type === 'XNOR') result = parity(ins, nd.type === 'XNOR');
+      else result = b.gate(nd.type, ins);
+      mapped.set(id, result);
+      return result;
+    };
+    return visit(root);
+  }
+
   function reasonText(e, lib) {
-    if (e.needInv) return 'signal inversion is required but the library has no INV / NAND / NOR';
+    if (e.needInv) return 'signal inversion requires INV, NAND, NOR, XOR or XNOR';
     if (e.need === 'AND') return 'an AND gate is required but AND is not selected';
     if (e.need === 'OR') return 'an OR gate is required but OR is not selected';
     if (e.need === 'XOR') return 'an XOR gate is required but XOR is not selected';
@@ -485,7 +590,7 @@
 
   /* Synthesize one output. Returns { id, path, display } or throws
      an Error whose .reasons is an array of human-readable strings. */
-  function synthesize(on, n, inIds, lib, b, inNames) {
+  function synthesize(on, n, inIds, lib, b, inNames, gateInputs = {}) {
     const total = 1 << n;
     if (on.length === 0) return { id: b.const0(), path: 'constant' };
     if (on.length === total) return { id: b.const1(), path: 'constant' };
@@ -511,13 +616,13 @@
     const candidates = [];
     const attempt = (path, build) => {
       try {
-        const id = build();
+        const id = mapGateInputs(b, build(), lib, gateInputs);
         const stats = netStats(b.nodes, reachable(b.nodes, [id]), [{ id }]);
         candidates.push({ id, path, ...stats });
       } catch (e) { reasons.push(path + ': ' + reasonText(e, lib)); }
     };
-    if (lib.has('AND') && lib.has('OR')) {
-      attempt('two-level AND/OR', () => cubesToSop(b, chosen, n, inIds, lib));
+    if (lib.has('AND') || lib.has('OR') || lib.has('INV')) {
+      attempt('AND/OR (SOP)', () => cubesToSop(b, chosen, n, inIds, lib));
       if (displayTerms) attempt('XOR-merged AND/OR', () => buildMergedTerms(b, displayTerms, n, inIds, lib));
       attempt('complemented AND/OR (De Morgan)', () => makeNot(b, cubesToSop(b, compCubes, n, inIds, lib), lib));
     }
@@ -529,7 +634,7 @@
     if (lib.has('OR') && lib.has('INV')) {
       attempt('OR + INV (De Morgan)', () => dmOrPath(b, compCubes, n, inIds, lib));
     }
-    if (lib.has('XOR')) attempt('XOR/AND (ANF)', () => anfPath(b, on, n, inIds, lib));
+    if (lib.has('XOR') || lib.has('XNOR')) attempt('parity/AND (ANF)', () => anfPath(b, on, n, inIds, lib));
     if (lib.has('MUX')) attempt('MUX tree', () => muxTree(b, inIds, vals, lib, {}));
     candidates.sort((a, b) => a.gates - b.gates || a.wires - b.wires || a.levels - b.levels);
     if (candidates.length) return finish(candidates[0].id, candidates[0].path);
@@ -1750,11 +1855,31 @@
     box.innerHTML = '';
     GATE_LIST.forEach(g => {
       const id = 'gate-' + g;
-      const wrap = document.createElement('span');
+      const wrap = document.createElement('div');
       wrap.className = 'gate-chip';
-      wrap.innerHTML = '<input type="checkbox" id="' + id + '" checked>'
-        + '<label for="' + id + '">' + g + '</label>';
+      wrap.setAttribute('role', 'group');
+      wrap.setAttribute('aria-labelledby', id + '-label');
+      wrap.innerHTML = '<label class="gate-type" for="' + id + '">'
+        + '<input type="checkbox" id="' + id + '" checked>'
+        + '<span id="' + id + '-label">' + g + '</span></label>'
+        + (g === 'INV'
+          ? '<div class="gate-unary">1 input</div>'
+          : '<div class="gate-inputs" role="group" aria-label="' + g + ' input counts">'
+            + [2, 3, 4].map(n => '<label class="gate-input-option" for="' + id + '-' + n + '">'
+              + '<input type="checkbox" id="' + id + '-' + n + '" aria-label="' + g + ': ' + n + ' inputs" checked>'
+              + '<span>' + n + '</span></label>').join('') + '</div>');
       box.appendChild(wrap);
+      const parent = wrap.querySelector('#' + id);
+      const children = Array.from(wrap.querySelectorAll('.gate-input-option input'));
+      parent.addEventListener('change', () => {
+        parent.indeterminate = false;
+        children.forEach(child => { child.checked = parent.checked; });
+      });
+      children.forEach(child => child.addEventListener('change', () => {
+        const count = children.filter(el => el.checked).length;
+        parent.checked = count > 0;
+        parent.indeterminate = count > 0 && count < children.length;
+      }));
     });
   }
   function selectedLib() {
@@ -1765,8 +1890,18 @@
     });
     return lib;
   }
+  function selectedGateInputs() {
+    const inputs = {};
+    selectedLib().forEach(g => {
+      if (g !== 'INV') inputs[g] = [2, 3, 4].filter(n => $('#gate-' + g + '-' + n).checked);
+    });
+    return inputs;
+  }
   function setGateSelection(checked) {
-    GATE_LIST.forEach(g => { $('#gate-' + g).checked = checked; });
+    $$('#gate-chips input[type="checkbox"]').forEach(el => {
+      el.checked = checked;
+      el.indeterminate = false;
+    });
   }
 
   /* ---- signal editors ---- */
@@ -1961,7 +2096,7 @@
       for (let o = 0; o < nOut; o++) {
         const on = [];
         for (let r = 0; r < rows; r++) if (table.vals[r][o] === '1') on.push(r);
-        const res = synthesize(on, nIn, inIds, lib, b, inNames);
+        const res = synthesize(on, nIn, inIds, lib, b, inNames, selectedGateInputs());
         roots.push({ id: res.id, label: outNames[o] });
         exprRows.push({ name: outNames[o], res, onCount: on.length });
       }
