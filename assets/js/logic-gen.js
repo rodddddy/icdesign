@@ -749,15 +749,19 @@
     }
 
     const pinOrder = new Map();
-    ids.forEach(id => {
-      const nd = nodes[id];
-      if (!['AND', 'NAND', 'OR', 'NOR', 'XOR', 'XNOR'].includes(nd.type)) return;
-      const order = nd.ins.map((src, i) => i).sort((a, b) =>
-        pos.get(nd.ins[a]).y - pos.get(nd.ins[b]).y || a - b);
-      const slots = [];
-      order.forEach((index, slot) => { slots[index] = slot; });
-      pinOrder.set(id, slots);
-    });
+    function assignPinOrder() {
+      pinOrder.clear();
+      ids.forEach(id => {
+        const nd = nodes[id];
+        if (!['AND', 'NAND', 'OR', 'NOR', 'XOR', 'XNOR'].includes(nd.type)) return;
+        const order = nd.ins.map((src, i) => i).sort((a, b) =>
+          pos.get(nd.ins[a]).y - pos.get(nd.ins[b]).y || a - b);
+        const slots = [];
+        order.forEach((index, slot) => { slots[index] = slot; });
+        pinOrder.set(id, slots);
+      });
+    }
+    assignPinOrder();
 
     function dataPinCount(nd) {
       return nd.type === 'MUX' ? nd.ins.length - muxSelCount(nd) : nd.ins.length;
@@ -852,6 +856,9 @@
       const p = pos.get(id), box = inputBox(id, p.x, p.y);
       labelBoxes.push({ ...box, x2: p.x - 2, input: id });
     });
+    /* pins must follow the final input order — a frozen order makes the
+       rails cross the gate face whenever terminals swap rows above */
+    assignPinOrder();
 
     const outputX = Math.max(colX(maxLevel), ...ids.map(id => pos.get(id).x + pos.get(id).w))
       + Math.max(96, (roots.length + 2) * TRACK);
