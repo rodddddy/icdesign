@@ -830,6 +830,7 @@
       yCursor += 48;
     });
 
+    const gateNames = new Map(), signalLabels = new Map(), gateCounts = new Map();
     // gates: column by column, order by barycenter of child y positions
     for (let lv = 1; lv <= maxLevel; lv++) {
       let col = (byLevel.get(lv) || []).slice();
@@ -849,9 +850,26 @@
         const w = g.w + (g.bubble ? 10 : 0) + (g.xorCurve ? 10 : 0);
         const cy = Math.max(y + h / 2, bary(id));
         pos.set(id, { x: colX(lv), y: cy, w, h, gate: true });
+        const count = (gateCounts.get(nd.type) || 0) + 1;
+        gateCounts.set(nd.type, count);
+        const name = nd.type + count;
+        gateNames.set(id, name);
+        if (!rootIds.has(id)) {
+          const inverted = nd.type === 'INV' && nodes[nd.ins[0]].type === 'IN';
+          const text = inverted ? nodes[nd.ins[0]].label : 'O_' + name;
+          signalLabels.set(id, { text, inverted, width: text.length * 6 });
+        }
         y = cy + h / 2 + 52 + (g.mux ? 24 : 0);
       });
     }
+    let labelSpace = 0;
+    for (let lv = 1; lv <= maxLevel; lv++) {
+      labelSpace += Math.max(0, ...(byLevel.get(lv - 1) || []).filter(id => signalLabels.has(id))
+        .map(id => pos.get(id).w + signalLabels.get(id).width + 12 - 80));
+      colXs[lv] += labelSpace;
+      (byLevel.get(lv) || []).forEach(id => { pos.get(id).x = colX(lv); });
+    }
+    const outputLead = src => signalLabels.has(src) ? signalLabels.get(src).width + 12 : 18;
 
     const pinOrder = new Map();
     function assignPinOrder() {
@@ -923,10 +941,19 @@
     const labelBoxes = [];
     ids.forEach(id => {
       const p = pos.get(id), nd = nodes[id];
-      if (!p.gate || nd.type === 'MUX' || nd.type === 'BUF') return;
-      const cx = f(p.x + p.w / 2), baseline = f(p.y + p.h / 2 + 14);
-      const half = nd.type.length * 3 + 4;
-      labelBoxes.push({ x1: cx - half, x2: cx + half, y1: baseline - 13, y2: baseline + 6 });
+      if (!p.gate) return;
+      if (nd.type !== 'MUX') {
+        const cx = f(p.x + p.w / 2), baseline = f(p.y + p.h / 2 + 14);
+        const half = gateNames.get(id).length * 3 + 4;
+        labelBoxes.push({ owner: id, x1: cx - half, x2: cx + half, y1: baseline - 13, y2: baseline + 6 });
+      }
+      const signal = signalLabels.get(id);
+      if (!signal) return;
+      const pin = outPin(id);
+      signal.x = f(pin.x + 6);
+      signal.y = f(pin.y - 6);
+      labelBoxes.push({ owner: id, x1: signal.x - 2, x2: signal.x + signal.width + 2,
+        y1: signal.y - 14, y2: signal.y + 3 });
     });
     const inputBox = (id, x, y) => ({
       x1: x - 10 - nodes[id].label.length * 7.5, x2: x + 10, y1: y - 7, y2: y + 7
@@ -965,7 +992,7 @@
        rails cross the gate face whenever terminals swap rows above */
     assignPinOrder();
 
-    const outputX = Math.max(colX(maxLevel), ...ids.map(id => pos.get(id).x + pos.get(id).w))
+    let outputX = Math.max(colX(maxLevel), ...ids.map(id => pos.get(id).x + pos.get(id).w))
       + Math.max(96, (roots.length + 2) * TRACK);
     let constantY = Math.max(topMargin, ...ids.filter(id => pos.get(id).gate)
       .map(id => pos.get(id).y + pos.get(id).h / 2 + 20)) + 48;
@@ -986,7 +1013,7 @@
       outputIndex.set(port.src, index + 1);
       const y = f(Math.max(outputY, outPin(port.src).y - (outputCounts.get(port.src) - 1) * 24 + index * 48));
       pos.set(port.dst, { x: outputX, y, w: 0, h: 20, output: true });
-      labelBoxes.push({ x1: outputX + 7, x2: outputX + 14 + port.label.length * 7.5, y1: y - 10, y2: y + 12 });
+      labelBoxes.push({ owner: port.dst, x1: outputX + 7, x2: outputX + 14 + port.label.length * 7.5, y1: y - 10, y2: y + 12 });
       outputY = y + 48;
     });
     constantOutputs.forEach(id => {
@@ -997,17 +1024,8 @@
     /* canvas size */
     let maxY = 0;
     pos.forEach(p => maxY = Math.max(maxY, p.y + p.h / 2 + (p.gate ? 16 : 0)));
-    const width = outputX + Math.max(90, ...roots.map(r => r.label.length * 7.5 + 20));
-    const height = maxY + 40;
-
-    const svg = [];
-    svg.push('<svg xmlns="http://www.w3.org/2000/svg" width="' + width + '" height="' + height + '" viewBox="0 0 ' + width + ' ' + height + '" font-family="Consolas,Menlo,monospace" font-size="12">');
-    if (dl) svg.push('<rect x="0" y="0" width="' + width + '" height="' + height + '" fill="#ffffff"/>');
-    svg.push('<defs><style>'
-      + (dl
-        ? '.gl{stroke:#000;stroke-width:1.6;fill:none}.gb{stroke:#000;stroke-width:1.6;fill:#fff}.gc{stroke:#000;stroke-width:1.6;fill:none}.bb{fill:#fff;stroke:#000;stroke-width:1.6}.term{fill:#fff;stroke:#000;stroke-width:1.4}.dot{fill:#000}.lbl{fill:#000}.olbl{fill:#000;font-weight:bold}.gt{fill:#000;font-size:9.5px}'
-        : '.gl{stroke:var(--sg-wire);stroke-width:1.6;fill:none}.gb{stroke:var(--sg-gate);stroke-width:1.6;fill:var(--bg)}.gc{stroke:var(--sg-gate);stroke-width:1.6;fill:none}.bb{fill:var(--bg);stroke:var(--sg-gate);stroke-width:1.6}.term{fill:var(--bg);stroke:var(--sg-wire);stroke-width:1.4}.dot{fill:var(--sg-wire)}.lbl{fill:var(--sg-label)}.olbl{fill:var(--sg-out);font-weight:bold}.gt{fill:var(--sg-gate);opacity:.8;font-size:9.5px}')
-      + '</style></defs>');
+    let width = outputX + Math.max(90, ...roots.map(r => r.label.length * 7.5 + 20));
+    let height = maxY + 40;
 
     /* wires: orthogonal (horizontal/vertical) routing, one trunk per source */
     const edges = [];
@@ -1015,7 +1033,7 @@
       const nd = nodes[id];
       nd.ins.forEach((src, i) => {
         if (!reach.has(src)) return;
-        edges.push({ src, dst: id, pin: inPin(id, i) });
+        edges.push({ src, dst: id, index: i, pin: inPin(id, i) });
       });
     });
     outputPorts.forEach(port => {
@@ -1080,10 +1098,6 @@
        de-confliction) */
     const usedH = [];
     const usedV = [];
-    outputPorts.forEach(port => {
-      const pin = pos.get(port.dst);
-      usedH.push({ src: port.src, y: pin.y, x1: pin.x - 14, x2: pin.x });
-    });
     let curSrc = null;
     const registerWire = (src, d) => {
       const toks = d.split(' ');
@@ -1389,20 +1403,27 @@
         ? 'H ' + f(L.x2)
         : 'V ' + f(L.via) + ' H ' + f(L.x2) + ' V ' + f(L.y)).join(' ');
     };
+    const namedInputs = new Set(), inputReferences = [];
+    const fixedLabelCount = labelBoxes.length;
+    const physicalEdges = list => list.filter(e => !namedInputs.has(e));
+    const sourceStub = src => {
+      const pin = outPin(src);
+      return { x: pin.x + outputLead(src), y: pin.y };
+    };
     const wires = []; // {src, d}
     const dots = [];
     const dotKeys = new Set();
-    const addDot = (x, y) => {
+    const addDot = (x, y, src) => {
       const k = f(x) + ',' + f(y);
       if (dotKeys.has(k)) return;
       dotKeys.add(k);
-      dots.push([x, y]);
+      dots.push([x, y, src]);
     };
     /* join path fragments, dropping empties so no dangling/blank commands
        ever reach the SVG path parser */
     const dstr = (...parts) => parts.filter(p => p && p.trim()).join(' ');
     const pushWire = (src, d) => {
-      if (nodes[src].type === 'IN' && bySrc.get(src).length === 1 && !rootIds.has(src)) {
+      if (!namedInputs.size && nodes[src].type === 'IN' && bySrc.get(src).length === 1 && !rootIds.has(src)) {
         const t = d.split(' '), p = pos.get(src), x = f(p.x + 6);
         if (t[3] === 'H' && t[5] === 'V' && t[7] === 'H' && +t[4] > x && +t[8] > +t[4]) {
           const y = +t[6], endX = +t[4], box = inputBox(src, p.x, y);
@@ -1446,6 +1467,7 @@
     const pathData = points => points.map((p, i) => i === 0
       ? 'M ' + f(p.x) + ' ' + f(p.y)
       : (p.y === points[i - 1].y ? 'H ' + f(p.x) : 'V ' + f(p.y))).join(' ');
+    let preferNestedTurns = false;
     const simpleRoute = (src, start, t, skip, branch) => {
       const end = { x: t.x, y: t.y + t.below };
       const candidates = [];
@@ -1453,7 +1475,7 @@
         if (t.below) points.push({ x: t.x, y: t.y });
         const ps = compactPoints(points);
         if (ps.length < 2) return;
-        if (!branch && (ps[1].y !== start.y || ps[1].x < start.x + 12)) return;
+        if (!branch && (ps[1].y !== start.y || ps[1].x < start.x + (signalLabels.has(src) ? outputLead(src) : 12))) return;
         const last = ps[ps.length - 2];
         if (t.below ? last.x !== t.x || last.y < t.y + 12 : last.y !== t.y || last.x > pos.get(t.dst).x - 8) return;
         let length = 0, crossings = 0;
@@ -1494,11 +1516,12 @@
             covered.forEach(([l, r]) => { length -= Math.max(0, r - Math.max(l, end)); end = Math.max(end, r); });
           }
         }
-        candidates.push({ ps, score: (ps.length - 2) * 80 + length + crossings * 12 });
+        candidates.push({ ps, crossings, score: (ps.length - 2) * 80 + length,
+          turn: ps[1].x * (end.y > start.y ? -1 : 1) });
       };
       if (start.y === end.y) consider([start, end]);
       const xs = [];
-      const left = start.x + (branch ? 0 : 18);
+      const left = start.x + (branch ? 0 : outputLead(src));
       const right = Math.min(t.below ? t.edge - 18 : pos.get(t.dst).x - 18, end.x - 12);
       for (let x = left; x <= right; x += TRACK) xs.push(x);
       if (right >= left) xs.push(right);
@@ -1520,10 +1543,12 @@
           }
         }
       }
-      candidates.sort((a, b) => a.score - b.score);
+      candidates.sort((a, b) => preferNestedTurns
+        ? a.crossings - b.crossings || a.score - b.score || a.turn - b.turn
+        : (a.score + a.crossings * 12) - (b.score + b.crossings * 12));
       return candidates.length ? pathData(candidates[0].ps) : null;
     };
-    bySrc.forEach((list, src) => {
+    function routeNet(list, src) {
       curSrc = src;
       const s = outPin(src);
       if (!s) return;
@@ -1549,12 +1574,12 @@
              parallel-close to another net's vertical, or pass through a
              foreign pin — step it right until clean; lane overflow in a
              crowded column can push mx past the pin, so clamp it back */
-          let mx = s.x + 18 + lane * TRACK;
+          let mx = s.x + outputLead(src) + lane * TRACK;
           const mxOk = x => vClean2(x, s.y, jy, ad, skip)
             && !epTaken(x, jy, skip) && !epTaken(x, s.y, skip);
           while (mx < t.x - 12 && !mxOk(mx)) mx += 9;
           if (mx > t.x - 12 || !mxOk(mx)) {
-            const slot = fineSlot(s.x + 18, t.x - 12, mxOk);
+            const slot = fineSlot(s.x + outputLead(src), t.x - 12, mxOk);
             if (slot >= 0) mx = slot;
           }
           if (mx > t.x) mx = t.x;
@@ -1622,14 +1647,14 @@
         const yMax = Math.max(s.y, Math.max.apply(null, jys));
         const minTx = Math.min.apply(null, ts.map(t => t.x));
         let trunkX = list.every(e => pos.get(e.dst).output)
-          ? Math.max(s.x + 18, minTx - 36 - lane * TRACK) : s.x + 18 + lane * TRACK;
+          ? Math.max(s.x + outputLead(src), minTx - 36 - lane * TRACK) : s.x + outputLead(src) + lane * TRACK;
         const trOk = x => vClean2(x, yMin, yMax, null, skip)
           && !usedV.some(u => u.src !== src && Math.abs(u.x - x) < TRACK
             && Math.min(yMax, u.y2) - Math.max(yMin, u.y1) > 0.1)
           && !epTaken(x, yMin, skip) && !epTaken(x, yMax, skip) && !epTaken(x, s.y, skip);
         while (trunkX < minTx - 12 && !trOk(trunkX)) trunkX += 9;
         if (trunkX > minTx - 12 || !trOk(trunkX)) {
-          const slot = fineSlot(s.x + 18, minTx - 12, trOk);
+          const slot = fineSlot(s.x + outputLead(src), minTx - 12, trOk);
           if (slot >= 0) trunkX = slot;
         }
         if (trunkX > minTx) trunkX = minTx;
@@ -1649,12 +1674,232 @@
             (t.below ? 'V ' + f(t.y) : '')));
         });
       }
-    });
-    curSrc = null;
+    }
+    const inputRows = inOrder.map(id => pos.get(id).y);
+    function routeAll() {
+      wires.length = usedH.length = usedV.length = 0;
+      inOrder.forEach((id, i) => {
+        const p = pos.get(id);
+        p.y = inputRows[i];
+        Object.assign(labelBoxes.find(b => b.input === id), { ...inputBox(id, p.x, p.y), x2: p.x - 2 });
+      });
+      edges.forEach((e, i) => {
+        const pin = e.index != null ? inPin(e.dst, e.index) : pos.get(e.dst);
+        Object.assign(e.pin, { x: pin.x, y: pin.y });
+        if (pin.below) Object.assign(e.pin, { below: pin.below, edge: pin.edge });
+        Object.assign(pinPts[i], { x: e.pin.x, y: e.pin.y });
+      });
+      outputPorts.forEach(port => {
+        const pin = pos.get(port.dst);
+        usedH.push({ src: port.src, y: pin.y, x1: pin.x - 14, x2: pin.x });
+      });
+      bySrc.forEach((list, src) => {
+        const connected = physicalEdges(list);
+        if (connected.length) routeNet(connected, src);
+        else pushWire(src, pathData([outPin(src), sourceStub(src)]));
+      });
+      curSrc = null;
+      pruneWires();
+      usedH.length = usedV.length = 0;
+      wires.forEach(w => registerWire(w.src, w.d));
+    }
+    const netPair = (a, b) => Math.min(a, b) + ',' + Math.max(a, b);
+    function routeQuality() {
+      const crossings = new Set(), pairs = new Set(), contacts = new Set();
+      usedH.forEach(h => usedV.forEach(v => {
+        if (h.src === v.src || v.x < h.x1 || v.x > h.x2 || h.y < v.y1 || h.y > v.y2) return;
+        const pair = netPair(h.src, v.src), key = pair + ':' + f(v.x) + ',' + f(h.y);
+        if (Math.min(v.x - h.x1, h.x2 - v.x, h.y - v.y1, v.y2 - h.y) < 0.4) contacts.add(key);
+        else { crossings.add(key); pairs.add(pair); }
+      }));
+      for (const [runs, axis, lo, hi] of [[usedH, 'y', 'x1', 'x2'], [usedV, 'x', 'y1', 'y2']]) {
+        for (let i = 0; i < runs.length; i++) for (let j = i + 1; j < runs.length; j++) {
+          const a = runs[i], b = runs[j], start = Math.max(a[lo], b[lo]), end = Math.min(a[hi], b[hi]);
+          if (a.src !== b.src && Math.abs(a[axis] - b[axis]) < 1.5 && end - start > 0.1) {
+            contacts.add(netPair(a.src, b.src) + ':' + axis + f(Math.min(a[axis], b[axis]))
+              + ',' + f(Math.max(a[axis], b[axis])) + ':' + f(start) + ',' + f(end));
+          }
+        }
+      }
+      return { crossings: crossings.size, pairs, contacts };
+    }
+    routeAll();
+    const segmentWork = () => (usedH.length + usedV.length) ** 2;
+    let workLeft = 25000 - segmentWork(), trials = 8, dirty = false;
+    let quality = workLeft >= segmentWork() ? routeQuality() : null;
+    const improves = next => next && next.crossings < quality.crossings
+      && [...next.contacts].every(k => quality.contacts.has(k));
+    if (quality?.crossings) {
+      preferNestedTurns = true;
+      trials--;
+      routeAll();
+      workLeft -= segmentWork();
+      const next = workLeft >= 0 ? routeQuality() : null;
+      if (improves(next)) quality = next;
+      else {
+        preferNestedTurns = false;
+        routeAll();
+      }
+    }
+    // Limit both full reroutes and pairwise segment checks on large diagrams.
+    while (trials > 0 && quality?.crossings && workLeft >= segmentWork()) {
+      const swaps = [];
+      pinOrder.forEach((slots, id) => {
+        const ins = nodes[id].ins;
+        for (let a = 0; a < ins.length; a++) for (let b = a + 1; b < ins.length; b++) {
+          if (quality.pairs.has(netPair(ins[a], ins[b]))) swaps.push({ slots, a, b });
+        }
+      });
+      let improved = false;
+      for (const { slots, a, b } of swaps) {
+        if (trials-- <= 0 || workLeft < segmentWork()) break;
+        [slots[a], slots[b]] = [slots[b], slots[a]];
+        routeAll();
+        dirty = false;
+        workLeft -= segmentWork();
+        const next = workLeft >= 0 ? routeQuality() : null;
+        if (improves(next)) {
+          quality = next;
+          improved = true;
+          break;
+        }
+        [slots[a], slots[b]] = [slots[b], slots[a]];
+        dirty = true;
+      }
+      if (!improved) break;
+    }
+    if (dirty) routeAll();
+    for (;;) {
+      const { byGate, byInput } = countInputCrossings();
+      const candidates = [...byGate].filter(([, crossings]) => crossings.size >= 4);
+      candidates.sort(([a, ac], [b, bc]) => bc.size - ac.size
+        || pos.get(a).x - pos.get(b).x || pos.get(a).y - pos.get(b).y || a - b);
+      if (!candidates.length) break;
+      const target = candidates[0][0];
+      byInput.forEach((crossings, edge) => {
+        if (edge.dst === target && crossings.size) namedInputs.add(edge);
+      });
+      inOrder.forEach((id, i) => { inputRows[i] = pos.get(id).y; });
+      layoutInputReferences();
+      routeAll();
+    }
 
-    // Prune only nonterminal leaves, so removing a detour tail cannot disconnect a pin.
-    const cleaned = [];
-    bySrc.forEach((list, src) => {
+    function countInputCrossings() {
+      const byNet = new Map(), byGate = new Map(), byInput = new Map();
+      usedH.forEach(h => usedV.forEach(v => {
+        if (h.src === v.src || Math.min(v.x - h.x1, h.x2 - v.x, h.y - v.y1, v.y2 - h.y) < 0.4) return;
+        const key = netPair(h.src, v.src) + ':' + f(v.x) + ',' + f(h.y);
+        for (const src of [h.src, v.src]) {
+          if (!byNet.has(src)) byNet.set(src, new Map());
+          byNet.get(src).set(key, { x: v.x, y: h.y, key });
+        }
+      }));
+      byNet.forEach((crossings, src) => {
+        const list = physicalEdges(bySrc.get(src));
+        if (!list.some(e => e.index != null)) return;
+        const { points, start } = netGraph(list, src, [...crossings.values()]);
+        const parents = new Map([[start, null]]), queue = [start];
+        for (let i = 0; i < queue.length; i++) {
+          queue[i].next.forEach(p => {
+            if (parents.has(p)) return;
+            parents.set(p, queue[i]);
+            queue.push(p);
+          });
+        }
+        list.forEach(e => {
+          if (e.index == null) return;
+          if (!byGate.has(e.dst)) byGate.set(e.dst, new Set());
+          const found = new Set();
+          for (let p = points.get(f(e.pin.x) + ',' + f(e.pin.y)); p; p = parents.get(p)) {
+            if (!parents.has(p)) break;
+            p.crossings?.forEach(key => found.add(key));
+          }
+          byInput.set(e, found);
+          found.forEach(key => byGate.get(e.dst).add(key));
+        });
+      });
+      return { byGate, byInput };
+    }
+    function referenceSignal(src) {
+      const nd = nodes[src];
+      if (nd.type === 'IN' || nd.type.startsWith('CONST')) return { text: labelOf(src), inverted: false };
+      if (rootIds.has(src)) return { text: roots.find(r => r.id === src).label, inverted: false };
+      return signalLabels.get(src);
+    }
+    function inputReference(e) {
+      const p = pos.get(e.dst), pin = inPin(e.dst, e.index), signal = referenceSignal(e.src);
+      const width = signal.text.length * 6;
+      let x = p.x - 24, y = pin.y + 3, anchor = 'end';
+      let end = { x: p.x - 18, y: pin.y };
+      if (pin.below) {
+        end = { x: pin.x, y: pin.y + 24 };
+        anchor = e.index === 0 ? 'start' : 'end';
+        x = pin.x + (anchor === 'start' ? 6 : -6);
+        y = end.y + 3;
+      }
+      const left = anchor === 'end' ? x - width : x;
+      return { ...signal, src: e.src, dst: e.dst, index: e.index, x: f(x), y: f(y), anchor,
+        d: pathData([end, pin]),
+        box: { x1: Math.min(left - 2, end.x - 2, pin.x - 2),
+          x2: Math.max(left + width + 2, end.x + 2, pin.x + 2),
+          y1: Math.min(y - 12, pin.y - 2), y2: y + 4 } };
+    }
+    function layoutInputReferences() {
+      inputReferences.length = 0;
+      labelBoxes.length = fixedLabelCount;
+      const referenced = edges.filter(e => namedInputs.has(e));
+      const extents = new Map(ids.map(id => [id, { left: 0, right: pos.get(id).w + outputLead(id) }]));
+      referenced.forEach(e => {
+        const ref = inputReference(e), p = pos.get(e.dst), extent = extents.get(e.dst);
+        extent.left = Math.min(extent.left, ref.box.x1 - p.x);
+        extent.right = Math.max(extent.right, ref.box.x2 - p.x);
+      });
+      const shifts = [0];
+      for (let lv = 1; lv <= maxLevel; lv++) {
+        const left = Math.min(0, ...(byLevel.get(lv) || []).map(id => extents.get(id).left));
+        const right = Math.max(0, ...(byLevel.get(lv - 1) || []).map(id => extents.get(id).right));
+        const gap = colXs[lv] - colXs[lv - 1];
+        shifts[lv] = shifts[lv - 1] + Math.max(0, right - left + 24 - gap);
+      }
+      ids.forEach(id => { pos.get(id).x += shifts[level.get(id)]; });
+      colXs.forEach((x, lv) => { colXs[lv] += shifts[lv]; });
+      const extraRight = Math.max(0, ...(byLevel.get(maxLevel) || []).map(id =>
+        pos.get(id).x + extents.get(id).right + 24 - outputX - shifts[maxLevel]));
+      const outputShift = shifts[maxLevel] + extraRight;
+      outputX += outputShift;
+      outputPorts.forEach(port => { pos.get(port.dst).x = outputX; });
+      constantOutputs.forEach(id => { pos.get(id).x += outputShift; });
+      labelBoxes.forEach(box => {
+        if (box.owner == null) return;
+        const shift = box.owner >= nodes.length ? outputShift : shifts[level.get(box.owner)];
+        box.x1 += shift;
+        box.x2 += shift;
+      });
+      signalLabels.forEach((signal, id) => { signal.x = f(outPin(id).x + 6); });
+      referenced.forEach(e => {
+        const ref = inputReference(e);
+        inputReferences.push(ref);
+        labelBoxes.push(ref.box);
+      });
+      bySrc.forEach((list, src) => {
+        if (physicalEdges(list).length) return;
+        const pin = outPin(src), end = sourceStub(src);
+        labelBoxes.push({ x1: pin.x - 2, x2: end.x + 8, y1: pin.y - 8, y2: pin.y + 8 });
+      });
+      width = outputX + Math.max(90, ...roots.map(r => r.label.length * 7.5 + 20));
+      height = Math.max(height, ...labelBoxes.map(box => box.y2 + 40));
+    }
+
+    function pruneWires() {
+      dots.length = 0;
+      dotKeys.clear();
+      const cleaned = [...bySrc].flatMap(([src, list]) => {
+        const connected = physicalEdges(list);
+        return pruneNet(connected.length ? connected : [{ pin: sourceStub(src) }], src);
+      });
+      wires.splice(0, wires.length, ...cleaned);
+    }
+    function netGraph(list, src, extraPoints = []) {
       const segments = [], points = new Map();
       const point = (x, y) => {
         const key = f(x) + ',' + f(y);
@@ -1670,9 +1915,14 @@
           a = b;
         }
       });
-      const source = outPin(src);
-      point(source.x, source.y).terminal = true;
+      const source = outPin(src), start = point(source.x, source.y);
+      start.terminal = true;
       list.forEach(e => { point(e.pin.x, e.pin.y).terminal = true; });
+      extraPoints.forEach(p => {
+        const q = point(p.x, p.y);
+        if (!q.crossings) q.crossings = new Set();
+        q.crossings.add(p.key);
+      });
       const contains = (s, p) => s.horizontal
         ? p.y === s.a.y && p.x >= Math.min(s.a.x, s.b.x) && p.x <= Math.max(s.a.x, s.b.x)
         : p.x === s.a.x && p.y >= Math.min(s.a.y, s.b.y) && p.y <= Math.max(s.a.y, s.b.y);
@@ -1690,6 +1940,10 @@
           ps[i].next.add(ps[i - 1]);
         }
       });
+      return { points, start };
+    }
+    function pruneNet(list, src) {
+      const cleaned = [], { points } = netGraph(list, src);
       const leaves = [...points.values()].filter(p => !p.terminal && p.next.size === 1);
       while (leaves.length) {
         const p = leaves.pop();
@@ -1699,7 +1953,7 @@
         q.next.delete(p);
         if (!q.terminal && q.next.size === 1) leaves.push(q);
       }
-      points.forEach(p => { if (p.next.size >= 3 && !p.terminal) addDot(p.x, p.y); });
+      points.forEach(p => { if (p.next.size >= 3 && !p.terminal) addDot(p.x, p.y, src); });
       const drawn = new Map();
       const seen = (a, b) => drawn.get(a)?.has(b);
       const mark = (a, b) => {
@@ -1723,20 +1977,58 @@
         }
         cleaned.push({ src, d: pathData(compactPoints(ps)) });
       }));
+      return cleaned;
+    }
+    const svg = [];
+    const netAttr = src => dl ? '' : ' data-net="' + src + '"';
+    svg.push('<svg xmlns="http://www.w3.org/2000/svg" width="' + width + '" height="' + height + '" viewBox="0 0 ' + width + ' ' + height + '" font-family="Consolas,Menlo,monospace" font-size="12">');
+    if (dl) svg.push('<rect x="0" y="0" width="' + width + '" height="' + height + '" fill="#ffffff"/>');
+    svg.push('<defs><style>'
+      + (dl
+        ? '.gl{stroke:#000;stroke-width:1.6;fill:none}.gb{stroke:#000;stroke-width:1.6;fill:#fff}.gc{stroke:#000;stroke-width:1.6;fill:none}.bb{fill:#fff;stroke:#000;stroke-width:1.6}.term{fill:#fff;stroke:#000;stroke-width:1.4}.dot{fill:#000}.lbl{fill:#000}.olbl{fill:#000;font-weight:bold}.gt{fill:#000;font-size:9.5px}'
+        : '.gl{stroke:var(--sg-wire);stroke-width:1.6;fill:none}.gb{stroke:var(--sg-gate);stroke-width:1.6;fill:var(--bg)}.gc{stroke:var(--sg-gate);stroke-width:1.6;fill:none}.bb{fill:var(--bg);stroke:var(--sg-gate);stroke-width:1.6}.term{fill:var(--bg);stroke:var(--sg-wire);stroke-width:1.4}.dot{fill:var(--sg-wire)}.lbl{fill:var(--sg-label)}.olbl{fill:var(--sg-out);font-weight:bold}.gt{fill:var(--sg-gate);opacity:.8;font-size:9.5px}')
+      + '.net-label{font-size:10px;fill:' + (dl ? '#000' : 'var(--sg-label)') + '}'
+      + (dl ? '' : '.net-hit{fill:none;stroke:transparent;stroke-width:8;pointer-events:stroke}'
+        + '.gl.net-active,.net-active .gl{stroke:var(--accent);stroke-width:2.6}'
+        + 'text.net-active,.net-active text,.dot.net-active{fill:var(--accent)}'
+        + '.term.net-active{stroke:var(--accent);stroke-width:2.6}')
+      + '</style></defs>');
+    if (dl) {
+      if (wires.length) svg.push('<path class="gl" d="' + wires.map(w => w.d).join(' ') + '"/>');
+    } else {
+      const netPaths = new Map();
+      wires.forEach(w => {
+        if (!netPaths.has(w.src)) netPaths.set(w.src, []);
+        netPaths.get(w.src).push(w.d);
+      });
+      const hitPaths = new Map([...netPaths].map(([src, paths]) => [src, [...paths]]));
+      inputReferences.forEach(ref => {
+        if (!hitPaths.has(ref.src)) hitPaths.set(ref.src, []);
+        hitPaths.get(ref.src).push(ref.d);
+      });
+      hitPaths.forEach((paths, src) => {
+        svg.push('<path class="net-hit"' + netAttr(src) + ' d="' + paths.join(' ') + '"/>');
+      });
+      netPaths.forEach((paths, src) => {
+        svg.push('<path class="gl"' + netAttr(src) + ' d="' + paths.join(' ') + '"/>');
+      });
+    }
+    if (dots.length) svg.push('<g>' + dots.map(d => '<circle class="dot"' + netAttr(d[2]) + ' cx="' + f(d[0]) + '" cy="' + f(d[1]) + '" r="3.5"/>').join('') + '</g>');
+    inputReferences.forEach(ref => {
+      svg.push('<g class="input-ref"' + netAttr(ref.src) + '><path class="gl" d="' + ref.d + '"/>'
+        + '<text x="' + ref.x + '" y="' + ref.y + '" text-anchor="' + ref.anchor + '" class="net-label"'
+        + (ref.inverted ? ' text-decoration="overline"' : '') + '>' + esc(ref.text) + '</text></g>');
     });
-    wires.splice(0, wires.length, ...cleaned);
-    if (wires.length) svg.push('<path class="gl" d="' + wires.map(w => w.d).join(' ') + '"/>');
-    if (dots.length) svg.push('<g>' + dots.map(d => '<circle class="dot" cx="' + f(d[0]) + '" cy="' + f(d[1]) + '" r="2.6"/>').join('') + '</g>');
 
     /* nodes */
     ids.forEach(id => {
       const p = pos.get(id), nd = nodes[id];
       if (nd.type === 'IN') {
-        svg.push('<circle class="term" cx="' + (p.x + 6) + '" cy="' + p.y + '" r="3.2"/>');
-        svg.push('<text x="' + (p.x - 6) + '" y="' + (p.y + 4) + '" text-anchor="end" class="lbl">' + esc(nd.label) + '</text>');
+        svg.push('<circle class="term"' + netAttr(id) + ' cx="' + (p.x + 6) + '" cy="' + p.y + '" r="3.2"/>');
+        svg.push('<text x="' + (p.x - 6) + '" y="' + (p.y + 4) + '" text-anchor="end" class="lbl"' + netAttr(id) + '>' + esc(nd.label) + '</text>');
       } else if (nd.type === 'CONST0' || nd.type === 'CONST1') {
         svg.push('<rect class="gb" x="' + p.x + '" y="' + (p.y - 10) + '" width="26" height="20" rx="4"/>');
-        svg.push('<text x="' + (p.x + 13) + '" y="' + (p.y + 4) + '" text-anchor="middle" class="lbl">' + (nd.type === 'CONST1' ? '1' : '0') + '</text>');
+        svg.push('<text x="' + (p.x + 13) + '" y="' + (p.y + 4) + '" text-anchor="middle" class="lbl"' + netAttr(id) + '>' + (nd.type === 'CONST1' ? '1' : '0') + '</text>');
       } else {
         svg.push(gateSvg(nd, p));
       }
@@ -1744,8 +2036,8 @@
 
     outputPorts.forEach(port => {
       const p = pos.get(port.dst);
-      svg.push('<circle class="term" cx="' + p.x + '" cy="' + p.y + '" r="3.2"/>');
-      svg.push('<text x="' + (p.x + 10) + '" y="' + (p.y + 4) + '" class="olbl">' + esc(port.label) + '</text>');
+      svg.push('<circle class="term"' + netAttr(port.src) + ' cx="' + p.x + '" cy="' + p.y + '" r="3.2"/>');
+      svg.push('<text x="' + (p.x + 10) + '" y="' + (p.y + 4) + '" class="olbl"' + netAttr(port.src) + '>' + esc(port.label) + '</text>');
     });
 
     svg.push('</svg>');
@@ -1764,7 +2056,7 @@
         const nSel = muxSelCount(nd);
         const dataN = nd.ins.length - nSel;
         s += '<path class="gb" d="M ' + f(x) + ' ' + f(top) + ' L ' + f(x + bw) + ' ' + f(top + 7) + ' L ' + f(x + bw) + ' ' + f(top + h - 7) + ' L ' + f(x) + ' ' + f(top + h) + ' Z"/>';
-        s += '<text x="' + f(x + bw / 2) + '" y="' + f(top + 14) + '" text-anchor="middle" class="gt">MUX</text>';
+        s += '<text x="' + f(x + bw / 2) + '" y="' + f(top + 14) + '" text-anchor="middle" class="gt gname">' + gateNames.get(nd.id) + '</text>';
         const ys = pinYs(nd.type, dataN);
         for (let j = 0; j < dataN; j++) {
           const code = (dataN - 1 - j).toString(2).padStart(nSel, '0');
@@ -1787,8 +2079,13 @@
       if (g.bubble) {
         s += '<circle class="bb" cx="' + f(x + xo + bw + 5) + '" cy="' + f(yc) + '" r="5"/>';
       }
-      if (!g.mux && nd.type !== 'BUF') {
-        s += '<text x="' + f(x + w / 2) + '" y="' + f(yc + h / 2 + 14) + '" text-anchor="middle" class="gt">' + nd.type + '</text>';
+      if (!g.mux) {
+        s += '<text x="' + f(x + w / 2) + '" y="' + f(yc + h / 2 + 14) + '" text-anchor="middle" class="gt gname">' + gateNames.get(nd.id) + '</text>';
+      }
+      const signal = signalLabels.get(nd.id);
+      if (signal) {
+        s += '<text x="' + signal.x + '" y="' + signal.y + '" class="net-label"' + netAttr(nd.id)
+          + (signal.inverted ? ' text-decoration="overline"' : '') + '>' + esc(signal.text) + '</text>';
       }
       return s;
     }
@@ -1847,6 +2144,23 @@
     $('#generate').addEventListener('click', onGenerate);
     $('#dl-svg').addEventListener('click', downloadSvg);
     $('#dl-png').addEventListener('click', downloadPng);
+    bindCircuitHover();
+  }
+
+  function bindCircuitHover() {
+    const box = $('#circuit-box');
+    const highlight = target => {
+      const svg = box.querySelector('svg');
+      if (!svg) return;
+      const item = target instanceof Element ? target.closest('[data-net]') : null;
+      const net = item && svg.contains(item) ? item.dataset.net : null;
+      svg.querySelectorAll('[data-net]').forEach(el => {
+        el.classList.toggle('net-active', el.dataset.net === net);
+      });
+    };
+    box.addEventListener('pointerover', e => highlight(e.target));
+    box.addEventListener('pointerout', e => highlight(e.relatedTarget));
+    box.addEventListener('pointerleave', () => highlight(null));
   }
 
   /* ---- gate chips ---- */
