@@ -655,6 +655,84 @@
     throw err;
   }
 
+  function compileExpression(text, inNames) {
+    if (!text.trim()) throw new Error('Enter an expression.');
+    if (text.length > 4096) throw new Error('Expressions may contain at most 4096 characters.');
+    const inputs = new Map(inNames.map((name, index) => [name, index]));
+    const output = [], operators = [];
+    const precedence = { '+': 1, '^': 2, '~^': 2, '*': 3, '!': 4 };
+    let expectOperand = true, depth = 0;
+    const fail = (message, index) => { throw new Error(message + ' at character ' + (index + 1) + '.'); };
+    const binary = op => {
+      while (operators.length && operators[operators.length - 1] !== '('
+        && precedence[operators[operators.length - 1]] >= precedence[op]) output.push(operators.pop());
+      operators.push(op);
+      expectOperand = true;
+    };
+    for (let i = 0; i < text.length;) {
+      if (/\s/.test(text[i])) { i++; continue; }
+      const start = i;
+      let token = text[i++];
+      if (/[A-Za-z_]/.test(token)) {
+        while (i < text.length && /[A-Za-z0-9_]/.test(text[i])) token += text[i++];
+        if (!inputs.has(token)) fail('Unknown input signal "' + token + '"', start);
+        if (!expectOperand) binary('*');
+        output.push({ input: inputs.get(token) });
+        expectOperand = false;
+        continue;
+      }
+      if (/[0-9]/.test(token)) {
+        while (i < text.length && /[0-9]/.test(text[i])) token += text[i++];
+        if (token !== '0' && token !== '1') fail('Only the constants 0 and 1 are allowed', start);
+        if (!expectOperand) binary('*');
+        output.push({ value: +token });
+        expectOperand = false;
+        continue;
+      }
+      if (token === '(') {
+        if (!expectOperand) binary('*');
+        operators.push(token);
+        depth++;
+      } else if (token === ')') {
+        if (!depth) fail('Unexpected closing parenthesis', start);
+        if (expectOperand) fail('Expected an input, 0, 1 or an opening parenthesis', start);
+        while (operators[operators.length - 1] !== '(') output.push(operators.pop());
+        operators.pop();
+        depth--;
+      } else if ("'‘’′".includes(token)) {
+        if (expectOperand) fail('NOT must follow a signal or closing parenthesis', start);
+        output.push('!');
+      } else {
+        if (token === '~' && text[i] === '^') { token = '~^'; i++; }
+        const aliases = { '⊕': '^', '⊙': '~^', '&': '*', '|': '+', '~': '!' };
+        token = aliases[token] || token;
+        if (token === '!') {
+          if (!expectOperand) binary('*');
+          operators.push(token);
+        } else if (token === '+' || token === '*' || token === '^' || token === '~^') {
+          if (expectOperand) fail('Expected an input, 0, 1 or an opening parenthesis', start);
+          binary(token);
+        } else fail('Unsupported symbol "' + text[start] + '"', start);
+      }
+    }
+    if (expectOperand) throw new Error('The expression is incomplete.');
+    if (depth) throw new Error('Missing closing parenthesis.');
+    while (operators.length) output.push(operators.pop());
+    return bits => {
+      const values = [];
+      output.forEach(token => {
+        if (typeof token !== 'string') values.push(token.input != null ? bits[token.input] : token.value);
+        else if (token === '!') values.push(1 - values.pop());
+        else {
+          const right = values.pop(), left = values.pop();
+          values.push(token === '*' ? left & right : token === '+' ? left | right
+            : token === '^' ? left ^ right : 1 ^ left ^ right);
+        }
+      });
+      return values[0];
+    };
+  }
+
   /* ---------------------------------------------------------- *
    *  Expression rendering                                       *
    * ---------------------------------------------------------- */
@@ -2530,7 +2608,7 @@
   /* ---------------------------------------------------------- *
    *  Browser UI wiring                                          *
    * ---------------------------------------------------------- */
-  const CORE = { bitsOf, minimizeSOP, coverSOP, anfCoefficients, mergeXorPair, makeBuilder, synthesize, renderSvg };
+  const CORE = { bitsOf, minimizeSOP, coverSOP, anfCoefficients, mergeXorPair, makeBuilder, synthesize, compileExpression, renderSvg };
   if (typeof module !== 'undefined' && module.exports) module.exports = CORE;
   if (typeof window !== 'undefined') window.ICLogic = CORE;
 
@@ -2543,6 +2621,9 @@
     inputs: ['IN1', 'IN2'],
     outputs: ['OUT1'],
     vals: [],   // vals[row][outIdx], '0'|'1'
+    expressions: [''],
+    mode: 'table',
+    activeExpression: 0,
     nRows: 0
   };
 
@@ -2554,11 +2635,29 @@
     renderSignalList('in');
     renderSignalList('out');
     rebuildTable(true);
+    renderExpressionEditor();
+    buildExpressionOperators();
+    const tabs = $$('.mode-tab');
+    tabs.forEach((tab, i) => {
+      tab.addEventListener('click', () => setInputMode(tab.dataset.mode));
+      tab.addEventListener('keydown', e => {
+        let next;
+        if (e.key === 'ArrowRight') next = (i + 1) % tabs.length;
+        else if (e.key === 'ArrowLeft') next = (i + tabs.length - 1) % tabs.length;
+        else if (e.key === 'Home') next = 0;
+        else if (e.key === 'End') next = tabs.length - 1;
+        else return;
+        e.preventDefault();
+        setInputMode(tabs[next].dataset.mode);
+        tabs[next].focus();
+      });
+    });
     $('#add-in').addEventListener('click', () => addSignal('in'));
     $('#add-out').addEventListener('click', () => addSignal('out'));
     $('#select-all-gates').addEventListener('click', () => setGateSelection(true));
     $('#clear-gates').addEventListener('click', () => setGateSelection(false));
-    $('#dl-excel').addEventListener('click', downloadExcel);
+    $('#dl-excel').addEventListener('click', () => downloadExcel());
+    $('#dl-expression-excel').addEventListener('click', () => downloadExcel(true));
     $('#generate').addEventListener('click', onGenerate);
     $('#dl-svg').addEventListener('click', downloadSvg);
     $('#dl-png').addEventListener('click', downloadPng);
@@ -2606,11 +2705,15 @@
       parent.addEventListener('change', () => {
         parent.indeterminate = false;
         children.forEach(child => { child.checked = parent.checked; });
+        clearResults();
+        hideError();
       });
       children.forEach(child => child.addEventListener('change', () => {
         const count = children.filter(el => el.checked).length;
         parent.checked = count > 0;
         parent.indeterminate = count > 0 && count < children.length;
+        clearResults();
+        hideError();
       }));
     });
   }
@@ -2634,6 +2737,124 @@
       el.checked = checked;
       el.indeterminate = false;
     });
+    clearResults();
+    hideError();
+  }
+
+  function setInputMode(mode) {
+    if (mode === state.mode) return;
+    if (state.mode === 'table') syncValsFromDom();
+    state.mode = mode;
+    $$('.mode-tab').forEach(tab => {
+      const selected = tab.dataset.mode === mode;
+      tab.setAttribute('aria-selected', String(selected));
+      tab.tabIndex = selected ? 0 : -1;
+      document.getElementById(tab.getAttribute('aria-controls')).hidden = !selected;
+    });
+    clearResults();
+    hideError();
+  }
+
+  function expressionButton(text, token, title) {
+    const button = document.createElement('button');
+    button.type = 'button';
+    button.className = 'btn-add';
+    button.textContent = text;
+    button.title = title;
+    button.setAttribute('aria-label', title);
+    button.addEventListener('mousedown', e => e.preventDefault());
+    button.addEventListener('click', () => {
+      const field = $('#expression-' + state.activeExpression);
+      field.setRangeText(token, field.selectionStart, field.selectionEnd, 'end');
+      field.dispatchEvent(new Event('input', { bubbles: true }));
+      field.focus();
+    });
+    return button;
+  }
+
+  function refreshExpressionSignals() {
+    const palette = $('#expression-signals');
+    palette.replaceChildren();
+    state.inputs.forEach(name => {
+      const text = name.trim();
+      const button = expressionButton(text || '?', text, 'Insert signal ' + (text || '?'));
+      button.disabled = !/^[A-Za-z_][A-Za-z0-9_]*$/.test(text);
+      palette.appendChild(button);
+    });
+    $$('#expression-editor label').forEach((label, i) => {
+      label.textContent = (state.outputs[i].trim() || '?') + ' =';
+    });
+  }
+
+  function buildExpressionOperators() {
+    const operators = [
+      ['(', '(', 'Open parenthesis'], [')', ')', 'Close parenthesis'],
+      ['+', ' + ', 'OR (+)'], ['*', ' * ', 'AND (*)'],
+      ["'", "'", "NOT (postfix ')"], ['!', '!', 'NOT (prefix !)'],
+      ['⊕', ' ⊕ ', 'XOR (keyboard: ^)'], ['⊙', ' ⊙ ', 'XNOR (keyboard: ~^)'],
+      ['0', '0', 'Constant 0'], ['1', '1', 'Constant 1']
+    ];
+    $('#expression-operators').replaceChildren(...operators.map(args => expressionButton(...args)));
+  }
+
+  function renderExpressionEditor() {
+    const editor = $('#expression-editor');
+    editor.replaceChildren();
+    state.activeExpression = Math.min(state.activeExpression, state.outputs.length - 1);
+    state.outputs.forEach((name, i) => {
+      const row = document.createElement('div');
+      row.className = 'expression-input-row';
+      const label = document.createElement('label');
+      label.htmlFor = 'expression-' + i;
+      const field = document.createElement('input');
+      field.type = 'text';
+      field.id = label.htmlFor;
+      field.className = 'expression-input';
+      field.value = state.expressions[i];
+      field.maxLength = 4096;
+      field.spellcheck = false;
+      field.autocomplete = 'off';
+      field.placeholder = 'Enter a Boolean expression';
+      field.setAttribute('aria-describedby', 'expression-help');
+      field.addEventListener('focus', () => { state.activeExpression = i; });
+      field.addEventListener('input', () => {
+        state.expressions[i] = field.value;
+        field.classList.remove('invalid');
+        field.removeAttribute('aria-invalid');
+        clearResults();
+        hideError();
+      });
+      field.addEventListener('keydown', e => {
+        if (e.key === 'Enter' && !e.isComposing) { e.preventDefault(); onGenerate(); }
+      });
+      row.append(label, field);
+      editor.appendChild(row);
+    });
+    refreshExpressionSignals();
+  }
+
+  function readExpressions(inNames) {
+    const evaluators = [];
+    for (let i = 0; i < state.outputs.length; i++) {
+      const field = $('#expression-' + i);
+      state.expressions[i] = field.value;
+      field.classList.remove('invalid');
+      field.removeAttribute('aria-invalid');
+      try {
+        evaluators.push(compileExpression(field.value, inNames));
+      } catch (e) {
+        field.classList.add('invalid');
+        field.setAttribute('aria-invalid', 'true');
+        state.activeExpression = i;
+        field.focus();
+        showError('Invalid expression for "' + state.outputs[i].trim() + '"', e.message, []);
+        return null;
+      }
+    }
+    return Array.from({ length: 1 << inNames.length }, (_, row) => {
+      const bits = bitsOf(row, inNames.length);
+      return evaluators.map(evaluate => String(evaluate(bits)));
+    });
   }
 
   /* ---- signal editors ---- */
@@ -2654,6 +2875,9 @@
         const thIdx = kind === 'in' ? (i + 1) : (state.inputs.length + i + 1);
         const th = document.querySelector('#tt-container thead th:nth-child(' + thIdx + ')');
         if (th) th.textContent = inp.value || '?';
+        refreshExpressionSignals();
+        clearResults();
+        hideError();
       });
       const btn = document.createElement('button');
       btn.className = 'btn-mini';
@@ -2662,8 +2886,15 @@
       btn.disabled = arr.length <= 1;
       btn.addEventListener('click', () => {
         arr.splice(i, 1);
+        if (kind === 'out') {
+          state.expressions.splice(i, 1);
+          if (state.activeExpression > i) state.activeExpression--;
+          renderExpressionEditor();
+        } else refreshExpressionSignals();
         renderSignalList(kind);
         rebuildTable(true);
+        clearResults();
+        hideError();
       });
       row.appendChild(inp);
       row.appendChild(btn);
@@ -2678,8 +2909,14 @@
     let name = base + i;
     while (arr.includes(name)) { i++; name = base + i; }
     arr.push(name);
+    if (kind === 'out') {
+      state.expressions.push('');
+      renderExpressionEditor();
+    } else refreshExpressionSignals();
     renderSignalList(kind);
     rebuildTable(true);
+    clearResults();
+    hideError();
   }
 
   /* ---- truth table ---- */
@@ -2706,6 +2943,8 @@
     state.vals[r][o] = nv;
     btn.textContent = nv;
     btn.classList.toggle('on', nv === '1');
+    clearResults();
+    hideError();
   }
 
   function rebuildTable(preserve) {
@@ -2741,21 +2980,7 @@
     if (hint) hint.textContent = rows + ' rows (2^' + nIn + ' input combinations). Click a cell to toggle between 0 and 1.';
 
     const container = $('#tt-container');
-    let html = '<table class="tt"><thead><tr>';
-    state.inputs.forEach(n => html += '<th class="in-col">' + esc(n || '?') + '</th>');
-    state.outputs.forEach(n => html += '<th class="out-col">' + esc(n || '?') + '</th>');
-    html += '</tr></thead><tbody>';
-    for (let r = 0; r < rows; r++) {
-      html += '<tr>';
-      const bits = bitsOf(r, nIn);
-      bits.forEach(b => html += '<td class="in-cell">' + b + '</td>');
-      for (let o = 0; o < nOut; o++) {
-        html += '<td class="out-cell"><button type="button" class="tt-toggle' + (vals[r][o] === '1' ? ' on' : '') + '" data-row="' + r + '" data-out="' + o + '">' + vals[r][o] + '</button></td>';
-      }
-      html += '</tr>';
-    }
-    html += '</tbody></table>';
-    container.innerHTML = html;
+    container.innerHTML = tableHtml(vals, state.inputs, state.outputs, true);
     if (!container.dataset.toggleBound) {
       container.dataset.toggleBound = '1';
       container.addEventListener('click', e => {
@@ -2763,6 +2988,25 @@
         if (btn) onCellToggle(btn);
       });
     }
+  }
+
+  function tableHtml(vals, inNames, outNames, editable) {
+    let html = '<table class="tt"><thead><tr>';
+    inNames.forEach(name => { html += '<th class="in-col">' + esc(name || '?') + '</th>'; });
+    outNames.forEach(name => { html += '<th class="out-col">' + esc(name || '?') + '</th>'; });
+    html += '</tr></thead><tbody>';
+    vals.forEach((values, row) => {
+      html += '<tr>';
+      bitsOf(row, inNames.length).forEach(bit => { html += '<td class="in-cell">' + bit + '</td>'; });
+      values.forEach((value, out) => {
+        html += '<td class="out-cell">' + (editable
+          ? '<button type="button" class="tt-toggle' + (value === '1' ? ' on' : '')
+            + '" data-row="' + row + '" data-out="' + out + '">' + value + '</button>'
+          : value) + '</td>';
+      });
+      html += '</tr>';
+    });
+    return html + '</tbody></table>';
   }
 
   function esc(t) {
@@ -2799,10 +3043,15 @@
   /* ---- generate ---- */
   let lastResult = null;
 
+  function clearResults() {
+    $('#result-panel').hidden = true;
+    $('#expression-table-result').hidden = true;
+    lastResult = null;
+  }
+
   function onGenerate() {
     hideError();
-    $('#result-panel').classList.add('hidden');
-    lastResult = null;
+    clearResults();
 
     const sig = validateSignals();
     if (!sig.ok) return showError('Invalid signals', sig.msg, []);
@@ -2810,14 +3059,13 @@
     const lib = selectedLib();
     if (lib.size === 0) return showError('No gates selected', 'Choose at least one gate type in Step 2.', []);
 
-    const table = readTable(state.outputs.length);
-    if (!table.ok) return showError('Invalid truth table', table.msg, []);
-
     const nIn = state.inputs.length;
     const nOut = state.outputs.length;
     const inNames = state.inputs.map(s => s.trim());
     const outNames = state.outputs.map(s => s.trim());
-    const rows = state.nRows;
+    const vals = state.mode === 'expression' ? readExpressions(inNames) : readTable(nOut).vals;
+    if (!vals) return;
+    const rows = vals.length;
 
     const b = makeBuilder();
     const inIds = inNames.map(nm => b.input(nm));
@@ -2827,7 +3075,7 @@
     try {
       for (let o = 0; o < nOut; o++) {
         const on = [];
-        for (let r = 0; r < rows; r++) if (table.vals[r][o] === '1') on.push(r);
+        for (let r = 0; r < rows; r++) if (vals[r][o] === '1') on.push(r);
         const res = synthesize(on, nIn, inIds, lib, b, inNames, selectedGateInputs());
         roots.push({ id: res.id, label: outNames[o] });
         exprRows.push({ name: outNames[o], res, onCount: on.length });
@@ -2841,7 +3089,12 @@
     }
 
     const rendered = renderSvg(b, roots, inNames);
-    lastResult = { builder: b, roots, inNames };
+    lastResult = { builder: b, roots, inNames, outNames, vals };
+
+    const expressionMode = state.mode === 'expression';
+    $('#expression-table-result').hidden = !expressionMode;
+    $('#expression-table-container').innerHTML = expressionMode
+      ? tableHtml(vals, inNames, outNames, false) : '';
 
     /* expressions */
     const rc = $('#result-container');
@@ -2896,16 +3149,20 @@
     box.innerHTML = '';
   }
 
-  function downloadExcel() {
-    syncValsFromDom();
+  function downloadExcel(fromResult = false) {
+    if (fromResult && !lastResult) return;
+    if (!fromResult) syncValsFromDom();
+    const inNames = fromResult ? lastResult.inNames : state.inputs;
+    const outNames = fromResult ? lastResult.outNames : state.outputs;
+    const vals = fromResult ? lastResult.vals : state.vals;
     const quote = value => {
       const text = String(value);
       const safe = /^\s*[=+\-@]/.test(text) ? "'" + text : text;
       return '"' + safe.replace(/"/g, '""') + '"';
     };
-    const rows = [[...state.inputs, ...state.outputs]];
-    state.vals.forEach((values, row) => {
-      rows.push([...bitsOf(row, state.inputs.length), ...values]);
+    const rows = [[...inNames, ...outNames]];
+    vals.forEach((values, row) => {
+      rows.push([...bitsOf(row, inNames.length), ...values]);
     });
     const csv = '\uFEFF' + rows.map(row => row.map(quote).join(',')).join('\r\n');
     downloadBlob(new Blob([csv], { type: 'text/csv;charset=utf-8' }), 'truth-table.csv');

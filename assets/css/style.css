@@ -192,6 +192,26 @@ footer.site-footer {
 .gate-unary { margin-top: 4px; line-height: 24px; text-align: center; color: var(--muted); font-size: 11px; }
 .chipbar { display: flex; gap: 10px; flex-wrap: wrap; margin-top: 14px; }
 
+.mode-tabs { display: flex; gap: 8px; margin: 14px 0; }
+.mode-tab[aria-selected="true"] { color: var(--accent); border-color: var(--accent); background: var(--accent-soft); }
+.expression-palette { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 10px; }
+.expression-palette .btn-add { padding: 6px 10px; max-width: 100%; overflow-wrap: anywhere; }
+#expression-editor { margin: 14px 0 10px; }
+.expression-input-row {
+  display: grid; grid-template-columns: minmax(0, 10ch) minmax(0, 1fr);
+  align-items: center; gap: 10px; margin-bottom: 8px;
+}
+.expression-input-row label { color: var(--violet); font-family: var(--mono); min-width: 0; overflow-wrap: anywhere; }
+.expression-input {
+  width: 100%; min-width: 0; background: var(--bg-soft); border: 1px solid var(--border);
+  color: var(--text); border-radius: 8px; padding: 8px 12px; font-family: var(--mono); font-size: 14px;
+}
+.expression-input:focus { border-color: var(--accent); }
+.expression-input.invalid, .expression-input[aria-invalid="true"] { border-color: var(--danger); }
+.mode-tab:focus-visible, .expression-palette .btn-add:focus-visible,
+.expression-input:focus-visible, #dl-expression-excel:focus-visible { outline: 2px solid var(--accent); outline-offset: 3px; }
+.panel h2.result-subheading { font-size: 14px; }
+
 .tt-wrap { overflow: auto; max-height: 480px; border: 1px solid var(--border); border-radius: 10px; margin-top: 16px; }
 table.tt { border-collapse: collapse; width: 100%; font-family: var(--mono); font-size: 13.5px; }
 table.tt th, table.tt td { padding: 7px 14px; text-align: center; border-bottom: 1px solid var(--border); }

@@ -4,7 +4,7 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>Combinational Logic Generator — ICDesign Lab</title>
-  <meta name="description" content="Truth table to gate-level circuit generator with gate library constraints: NAND, NOR, AND, OR, XOR, MUX and more.">
+  <meta name="description" content="Generate gate-level circuits from truth tables or Boolean expressions with gate library constraints: NAND, NOR, AND, OR, XOR, MUX and more.">
   <link rel="stylesheet" href="../assets/css/style.css">
   <link rel="icon" href="data:image/svg+xml,&lt;svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'&gt;&lt;rect x='2' y='2' width='12' height='12' rx='2' fill='%2322d3ee'/&gt;&lt;/svg&gt;">
 </head>
@@ -23,9 +23,9 @@
     <div class="tool-header">
       <a class="back-link" href="../index.html">&larr; All tools</a>
       <h1>Combinational Logic Generator</h1>
-      <p>Define input / output signals, fill in a truth table, and get minimized Boolean
-         expressions plus a gate-level schematic. Restrict the gate library to explore
-         different implementation styles.</p>
+      <p>Define input / output signals, fill in a truth table or enter Boolean expressions,
+         and get minimized expressions plus a gate-level schematic. Restrict the gate library
+         to explore different implementation styles.</p>
     </div>
 
     <!-- Step 1: signals -->
@@ -65,13 +65,29 @@
 
     <!-- Step 3: truth table -->
     <section class="panel">
-      <h2><span class="step-num">3</span>Truth table</h2>
-      <p class="hint">Rows are generated automatically from all-0s to all-1s. Every output cell
-         starts at <code>0</code> &mdash; click it to toggle between <code>0</code> and <code>1</code>.</p>
-      <p class="hint" id="tt-hint"></p>
-      <div id="tt-container"></div>
-      <div class="chipbar">
-        <button class="btn-add" id="dl-excel" type="button">Export Excel (.csv)</button>
+      <h2><span class="step-num">3</span>Logic input</h2>
+      <div class="mode-tabs" role="tablist" aria-label="Input method">
+        <button class="btn-add mode-tab" id="tab-truth-table" type="button" data-mode="table" role="tab" aria-selected="true" aria-controls="truth-table-panel">Truth table</button>
+        <button class="btn-add mode-tab" id="tab-expression" type="button" data-mode="expression" role="tab" aria-selected="false" aria-controls="expression-panel" tabindex="-1">Expressions</button>
+      </div>
+      <div id="truth-table-panel" role="tabpanel" aria-labelledby="tab-truth-table">
+        <p class="hint">Rows are generated automatically from all-0s to all-1s. Every output cell
+           starts at <code>0</code> &mdash; click it to toggle between <code>0</code> and <code>1</code>.</p>
+        <p class="hint" id="tt-hint"></p>
+        <div id="tt-container"></div>
+        <div class="chipbar">
+          <button class="btn-add" id="dl-excel" type="button">Export Excel (.csv)</button>
+        </div>
+      </div>
+      <div id="expression-panel" hidden role="tabpanel" aria-labelledby="tab-expression">
+        <p class="hint">Click an input field to select an output, then click signal or operator tokens or type on your keyboard.</p>
+        <div id="expression-signals" class="expression-palette" role="group" aria-label="Input signals"></div>
+        <div id="expression-operators" class="expression-palette" role="group" aria-label="Operators"></div>
+        <div id="expression-editor"></div>
+        <p class="hint" id="expression-help">Supported: <code>*</code> or adjacent parentheses for AND,
+           <code>+</code> for OR, postfix <code>'</code> for NOT, <code>⊕</code> (<code>^</code>) for XOR,
+           and <code>⊙</code> (<code>~^</code>) for XNOR. Precedence: NOT &gt; AND &gt; XOR/XNOR &gt; OR.
+           Constants <code>0</code> and <code>1</code> are supported. Signal names are case-sensitive.</p>
       </div>
     </section>
 
@@ -86,6 +102,14 @@
     <section class="panel" id="result-panel" hidden>
       <h2><span class="step-num">4</span>Results</h2>
       <div id="result-container"></div>
+      <div id="expression-table-result" hidden>
+        <hr class="sep">
+        <h2 class="result-subheading">Generated truth table</h2>
+        <div id="expression-table-container" class="tt-wrap"></div>
+        <div class="chipbar">
+          <button class="btn-add" id="dl-expression-excel" type="button">Export Excel (.csv)</button>
+        </div>
+      </div>
       <hr class="sep">
       <h2 style="font-size:14px;">Gate-level schematic</h2>
       <div class="stat-chips" id="global-stats"></div>
