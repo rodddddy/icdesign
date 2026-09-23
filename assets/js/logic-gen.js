@@ -815,18 +815,16 @@
     function labelOf(id) {
       const nd = nodes[id];
       if (nd.type === 'IN') return nd.label;
-      if (nd.type === 'CONST0') return '0';
-      if (nd.type === 'CONST1') return '1';
+      if (nd.type === 'CONST0') return 'GND';
+      if (nd.type === 'CONST1') return 'VDD';
       return nd.type;
     }
     const inOrder = [];
     const topMargin = 36 + TRACK * lv0.length;
     let yCursor = topMargin;
     lv0.forEach(id => {
-      const nd = nodes[id];
-      const isIn = nd.type === 'IN';
-      pos.set(id, { x: colX(0), y: yCursor, w: isIn ? 0 : 26, h: 20, label: labelOf(id) });
-      if (isIn) inOrder.push(id);
+      pos.set(id, { x: colX(0), y: yCursor, w: 0, h: 20, label: labelOf(id) });
+      inOrder.push(id);
       yCursor += 48;
     });
 
@@ -895,8 +893,7 @@
     /* pin coordinates (absolute); MUX ins order: [s, d1, d0] or [s1, s0, d3, d2, d1, d0] */
     function inPin(id, i) {
       const p = pos.get(id), nd = nodes[id], g = GATE[nd.type];
-      if (nd.type === 'IN') return { x: p.x + 6, y: p.y };
-      if (nd.type === 'CONST0' || nd.type === 'CONST1') return { x: p.x + p.w, y: p.y };
+      if (!p.gate) return { x: p.x + 6, y: p.y };
       if (g.mux) {
         const nSel = muxSelCount(nd);
         if (i < nSel) {
@@ -932,9 +929,8 @@
         : { x: f(p.x + p.w * 0.68), y };
     }
     function outPin(id) {
-      const p = pos.get(id), nd = nodes[id];
-      if (nd.type === 'IN') return { x: p.x + 6, y: p.y };
-      if (nd.type === 'CONST0' || nd.type === 'CONST1') return { x: p.x + p.w, y: p.y };
+      const p = pos.get(id);
+      if (!p.gate) return { x: p.x + 6, y: p.y };
       return { x: p.x + p.w, y: p.y };
     }
 
@@ -956,12 +952,12 @@
         y1: signal.y - 14, y2: signal.y + 3 });
     });
     const inputBox = (id, x, y) => ({
-      x1: x - 10 - nodes[id].label.length * 7.5, x2: x + 10, y1: y - 7, y2: y + 7
+      x1: x - 10 - labelOf(id).length * 7.5, x2: x + 10, y1: y - 7, y2: y + 7
     });
     const overlaps = (a, b) => a.x1 < b.x2 && a.x2 > b.x1 && a.y1 < b.y2 && a.y2 > b.y1;
     inOrder.forEach(id => {
       const p = pos.get(id), next = [...new Set(consumers.get(id))];
-      if (!next.length || rootIds.has(id)) return;
+      if (nodes[id].type !== 'IN' || !next.length || rootIds.has(id)) return;
       const pins = next.flatMap(dst => nodes[dst].ins.flatMap((src, i) => src === id
         ? [{ ...inPin(dst, i), dst }] : []));
       const nearX = Math.min(...next.map(dst => pos.get(dst).x));
@@ -973,7 +969,7 @@
         if (ids.some(other => {
           if (other === id) return false;
           const q = pos.get(other);
-          return overlaps(box, nodes[other].type === 'IN' ? inputBox(other, q.x, q.y)
+          return overlaps(box, !q.gate ? inputBox(other, q.x, q.y)
             : { x1: q.x - 8, x2: q.x + q.w + 8, y1: q.y - q.h / 2 - 8, y2: q.y + q.h / 2 + 8 });
         })) continue;
         const score = pins.reduce((sum, pin) => sum
@@ -1070,8 +1066,8 @@
     const hBlockers = (y, x1, x2, skip, allowDst) => {
       const rs = [];
       ids.forEach(id => {
-        const p = pos.get(id), nd = nodes[id];
-        if (!p || nd.type === 'IN') return;
+        const p = pos.get(id);
+        if (!p.gate) return;
         if (allowDst && allowDst.has(id)) return;
         const gy1 = p.y - p.h / 2, gy2 = p.y + p.h / 2;
         if (y > gy1 - 8 && y < gy2 + 8
@@ -1118,8 +1114,8 @@
       const lo = Math.min(y1, y2), hi = Math.max(y1, y2);
       if (labelBoxes.some(b => vx > b.x1 && vx < b.x2 && Math.min(hi, b.y2) - Math.max(lo, b.y1) > 0.1)) return false;
       for (let i = 0; i < ids.length; i++) {
-        const id = ids[i], p = pos.get(id), nd = nodes[id];
-        if (!p || nd.type === 'IN') continue;
+        const id = ids[i], p = pos.get(id);
+        if (!p.gate) continue;
         if (allowDst && allowDst.has(id)) continue;
         if (vx > p.x - 0.4 && vx < p.x + p.w + 0.4) {
           const o = Math.min(hi, p.y + p.h / 2 - 2) - Math.max(lo, p.y - p.h / 2 + 2);
@@ -1225,8 +1221,8 @@
         let hit = null;
         ids.forEach(id => {
           if (hit) return;
-          const p = pos.get(id), nd = nodes[id];
-          if (!p || nd.type === 'IN') return;
+          const p = pos.get(id);
+          if (!p.gate) return;
           if (allowDst && allowDst.has(id)) return;
           if (fx > p.x + 1 && fx < p.x + p.w - 1 && fy > p.y - p.h / 2 + 1 && fy < p.y + p.h / 2 - 1) hit = id;
         });
@@ -1316,8 +1312,8 @@
              edge, which still reads as running through the gate */
           const bodyStrict = (yy, rx, dr) => {
             for (let i = 0; i < ids.length; i++) {
-              const id = ids[i], p = pos.get(id), nd = nodes[id];
-              if (!p || nd.type === 'IN') continue;
+              const id = ids[i], p = pos.get(id);
+              if (!p.gate) continue;
               if (allowDst && allowDst.has(id)) continue;
               if (Math.min(p.x + p.w, dr) - Math.max(p.x, rx) > 2
                 && yy > p.y - p.h / 2 - 0.6 && yy < p.y + p.h / 2 + 0.6) return true;
@@ -1422,8 +1418,9 @@
     /* join path fragments, dropping empties so no dangling/blank commands
        ever reach the SVG path parser */
     const dstr = (...parts) => parts.filter(p => p && p.trim()).join(' ');
+    let finalRouting = false;
     const pushWire = (src, d) => {
-      if (!namedInputs.size && nodes[src].type === 'IN' && bySrc.get(src).length === 1 && !rootIds.has(src)) {
+      if (!finalRouting && !namedInputs.size && !pos.get(src).gate && bySrc.get(src).length === 1 && !rootIds.has(src)) {
         const t = d.split(' '), p = pos.get(src), x = f(p.x + 6);
         if (t[3] === 'H' && t[5] === 'V' && t[7] === 'H' && +t[4] > x && +t[8] > +t[4]) {
           const y = +t[6], endX = +t[4], box = inputBox(src, p.x, y);
@@ -1468,12 +1465,13 @@
       ? 'M ' + f(p.x) + ' ' + f(p.y)
       : (p.y === points[i - 1].y ? 'H ' + f(p.x) : 'V ' + f(p.y))).join(' ');
     let preferNestedTurns = false;
-    const simpleRoute = (src, start, t, skip, branch) => {
+    const simpleRoute = (src, start, t, skip, branch, crossingLimit = Infinity, detours = true) => {
+      if (finalRouting) start = { x: f(start.x), y: f(start.y) };
       const end = { x: t.x, y: t.y + t.below };
       const candidates = [];
       const consider = points => {
         if (t.below) points.push({ x: t.x, y: t.y });
-        const ps = compactPoints(points);
+        const ps = compactPoints(finalRouting ? points.map(p => ({ x: f(p.x), y: f(p.y) })) : points);
         if (ps.length < 2) return;
         if (!branch && (ps[1].y !== start.y || ps[1].x < start.x + (signalLabels.has(src) ? outputLead(src) : 12))) return;
         const last = ps[ps.length - 2];
@@ -1492,7 +1490,7 @@
             for (const u of usedV) {
               if (u.src === src || u.x < lo || u.x > hi || a.y < u.y1 || a.y > u.y2) continue;
               if (Math.min(u.x - lo, hi - u.x, a.y - u.y1, u.y2 - a.y) < 4) return;
-              crossings++;
+              if (++crossings > crossingLimit) return;
             }
           } else {
             if (!vClean2(a.x, lo, hi, landing, skip)) return;
@@ -1502,7 +1500,7 @@
             for (const u of usedH) {
               if (u.src === src || u.y < lo || u.y > hi || a.x < u.x1 || a.x > u.x2) continue;
               if (Math.min(u.y - lo, hi - u.y, a.x - u.x1, u.x2 - a.x) < 4) return;
-              crossings++;
+              if (++crossings > crossingLimit) return;
             }
           }
           if (epTaken(b.x, b.y, skip)) return;
@@ -1520,13 +1518,16 @@
           turn: ps[1].x * (end.y > start.y ? -1 : 1) });
       };
       if (start.y === end.y) consider([start, end]);
+      if (finalRouting && branch && t.below && start.x === t.x && start.y >= t.y + 12) {
+        consider([start, { x: t.x, y: t.y }]);
+      }
       const xs = [];
       const left = start.x + (branch ? 0 : outputLead(src));
       const right = Math.min(t.below ? t.edge - 18 : pos.get(t.dst).x - 18, end.x - 12);
       for (let x = left; x <= right; x += TRACK) xs.push(x);
       if (right >= left) xs.push(right);
       xs.forEach(x => consider([start, { x, y: start.y }, { x, y: end.y }, end]));
-      if (!candidates.length) {
+      if (detours && !candidates.length) {
         const rows = new Set([start.y, end.y]);
         pos.forEach(p => {
           rows.add(p.y - p.h / 2 - 18);
@@ -1676,6 +1677,14 @@
       }
     }
     const inputRows = inOrder.map(id => pos.get(id).y);
+    function refreshPins() {
+      edges.forEach((e, i) => {
+        const pin = e.index != null ? inPin(e.dst, e.index) : pos.get(e.dst);
+        Object.assign(e.pin, { x: pin.x, y: pin.y });
+        if (pin.below) Object.assign(e.pin, { below: pin.below, edge: pin.edge });
+        Object.assign(pinPts[i], { x: e.pin.x, y: e.pin.y });
+      });
+    }
     function routeAll() {
       wires.length = usedH.length = usedV.length = 0;
       inOrder.forEach((id, i) => {
@@ -1683,12 +1692,7 @@
         p.y = inputRows[i];
         Object.assign(labelBoxes.find(b => b.input === id), { ...inputBox(id, p.x, p.y), x2: p.x - 2 });
       });
-      edges.forEach((e, i) => {
-        const pin = e.index != null ? inPin(e.dst, e.index) : pos.get(e.dst);
-        Object.assign(e.pin, { x: pin.x, y: pin.y });
-        if (pin.below) Object.assign(e.pin, { below: pin.below, edge: pin.edge });
-        Object.assign(pinPts[i], { x: e.pin.x, y: e.pin.y });
-      });
+      refreshPins();
       outputPorts.forEach(port => {
         const pin = pos.get(port.dst);
         usedH.push({ src: port.src, y: pin.y, x1: pin.x - 14, x2: pin.x });
@@ -1783,6 +1787,342 @@
       layoutInputReferences();
       routeAll();
     }
+    finalRouting = true;
+    restoreNamedInputs();
+    optimizePhysicalWires();
+    alignGateOutputs();
+    straightenTerminalWires();
+
+    function rebuildWireUsage() {
+      usedH.length = usedV.length = 0;
+      wires.forEach(w => registerWire(w.src, w.d));
+    }
+    function pathCost(d) {
+      const tokens = d.split(' ');
+      let x = +tokens[1], y = +tokens[2], cost = 0, previous;
+      for (let i = 3; i < tokens.length; i += 2) {
+        const axis = tokens[i], value = +tokens[i + 1];
+        cost += Math.abs(value - (axis === 'H' ? x : y));
+        if (previous && previous !== axis) cost += 80;
+        if (axis === 'H') x = value; else y = value;
+        previous = axis;
+      }
+      return cost;
+    }
+    function branchRoute(e, crossingLimit = 0, detours = false) {
+      const t = { ...e.pin, below: e.pin.below || 0, dst: e.dst };
+      const starts = new Map(), lead = sourceStub(e.src);
+      const add = (x, y) => {
+        x = f(x); y = f(y);
+        if (x > t.x || (y === f(lead.y) && x < f(lead.x))) return;
+        starts.set(x + ',' + y, { x, y });
+      };
+      usedH.filter(u => u.src === e.src).forEach(u => {
+        const tap = x => { if (x >= u.x1 && x <= u.x2) add(x, u.y); };
+        add(u.x1, u.y);
+        add(u.x2, u.y);
+        tap(lead.x);
+        tap(t.below ? t.x : pos.get(e.dst).x - 18);
+        usedV.forEach(v => {
+          if (v.src === e.src || u.y < v.y1 || u.y > v.y2) return;
+          tap(v.x - TRACK);
+          tap(v.x + TRACK);
+        });
+      });
+      usedV.filter(u => u.src === e.src).forEach(u => {
+        add(u.x, u.y1);
+        add(u.x, u.y2);
+        add(u.x, Math.max(u.y1, Math.min(u.y2, t.y + t.below)));
+      });
+      curSrc = e.src;
+      let best = null, cost = Infinity;
+      const distance = p => Math.abs(p.x - t.x) + Math.abs(p.y - t.y);
+      const ordered = [...starts.values()].sort((a, b) => distance(a) - distance(b));
+      for (const start of ordered) {
+        if (distance(start) >= cost) break;
+        const d = simpleRoute(e.src, start, t, new Set([e.dst]), true, crossingLimit, detours);
+        if (d == null) continue;
+        const next = pathCost(d);
+        if (next < cost) { best = d; cost = next; }
+      }
+      curSrc = null;
+      return best;
+    }
+    function restoreNamedInputs() {
+      for (;;) {
+        let restored = false;
+        for (const e of [...namedInputs]) {
+          namedInputs.delete(e);
+          refreshInputReferences();
+          const d = branchRoute(e);
+          if (d != null) {
+            pushWire(e.src, d);
+            pruneWires();
+            rebuildWireUsage();
+            restored = true;
+            break;
+          }
+          namedInputs.add(e);
+        }
+        if (!restored) break;
+      }
+      refreshInputReferences();
+    }
+    function netRouteCost(src) {
+      let cost = wires.filter(w => w.src === src).reduce((sum, w) => sum + pathCost(w.d), 0);
+      const crossings = new Set();
+      const connected = physicalEdges(bySrc.get(src));
+      let violations = 0;
+      for (const [runs, other, axis, lo, hi] of [
+        [usedH, usedV, 'y', 'x1', 'x2'], [usedV, usedH, 'x', 'y1', 'y2']
+      ]) {
+        for (const a of runs.filter(u => u.src === src)) {
+          const landing = new Set(connected.filter(e => axis === 'y'
+            ? !e.pin.below && e.pin.y === a.y && e.pin.x === a.x2
+            : e.pin.below && e.pin.x === a.x && e.pin.y === a.y1).map(e => e.dst));
+          violations += axis === 'y' ? hBlockers(a.y, a.x1, a.x2, null, landing).length
+            : Number(!vCleanG(a.x, a.y1, a.y2, landing));
+          for (const b of runs) {
+            const gap = Math.abs(a[axis] - b[axis]);
+            if (b.src === src || gap >= TRACK) continue;
+            const length = Math.max(0, Math.min(a[hi], b[hi]) - Math.max(a[lo], b[lo]));
+            cost += length * (TRACK - gap) / TRACK * 4;
+            if (gap < 1.5 && length > 0.1) violations++;
+          }
+          for (const b of other) {
+            if (b.src === src) continue;
+            const h = axis === 'y' ? a : b, v = axis === 'y' ? b : a;
+            const clearance = Math.min(v.x - h.x1, h.x2 - v.x, h.y - v.y1, v.y2 - h.y);
+            if (clearance >= 0.4) crossings.add(b.src + ':' + f(v.x) + ',' + f(h.y));
+            else if (clearance >= 0) violations++;
+          }
+        }
+      }
+      return { cost, crossings: crossings.size, violations };
+    }
+    function optimizePhysicalWires() {
+      let workLeft = 250000;
+      const canTry = src => {
+        workLeft -= (usedH.length + usedV.length) * (usedH.filter(u => u.src === src).length
+          + usedV.filter(u => u.src === src).length + 1);
+        return workLeft >= 0;
+      };
+      const improves = (a, b) => a.violations < b.violations || (a.violations === b.violations
+        && (a.crossings < b.crossings || (a.crossings === b.crossings && a.cost < b.cost - 0.1)));
+      bySrc.forEach((list, src) => {
+        const connected = physicalEdges(list);
+        if (!connected.length || !canTry(src)) return;
+        let quality = netRouteCost(src), saved = wires.slice();
+        const repair = quality.violations > 0;
+        const p = pos.get(src), movable = !p.gate && !rootIds.has(src);
+        let bestY = p.y;
+        const rows = new Set([p.y]);
+        if (movable) {
+          connected.forEach(e => { if (!e.pin.below) rows.add(e.pin.y); });
+          usedH.filter(u => u.src === src).forEach(u => rows.add(u.y));
+        }
+        const moveInput = y => {
+          p.y = y;
+          if (movable) Object.assign(labelBoxes.find(b => b.input === src), { ...inputBox(src, p.x, y), x2: p.x - 2 });
+        };
+        for (const y of rows) {
+          if (!canTry(src)) break;
+          const box = movable ? inputBox(src, p.x, y) : null;
+          if (movable && (y < 14 || y > height - 14
+            || labelBoxes.some(b => b.input !== src && overlaps(box, b))
+            || usedH.some(u => u.src !== src && overlaps(box, { x1: u.x1, x2: u.x2, y1: u.y - 4, y2: u.y + 4 }))
+            || usedV.some(u => u.src !== src && overlaps(box, { x1: u.x - 4, x2: u.x + 4, y1: u.y1, y2: u.y2 })))) continue;
+          moveInput(y);
+          const source = outPin(src);
+          wires.splice(0, wires.length, ...saved.filter(w => w.src !== src));
+          rebuildWireUsage();
+          connected.sort((a, b) => Math.abs(a.pin.x - source.x) + Math.abs(a.pin.y - source.y)
+            - Math.abs(b.pin.x - source.x) - Math.abs(b.pin.y - source.y));
+          let complete = true;
+          for (let i = 0; i < connected.length; i++) {
+            const e = connected[i];
+            curSrc = src;
+            const d = i === 0
+              ? simpleRoute(src, source, { ...e.pin, below: e.pin.below || 0, dst: e.dst }, new Set([e.dst]), false, repair ? Infinity : 0, repair)
+              : branchRoute(e, repair ? Infinity : 0, repair);
+            if (d == null) { complete = false; break; }
+            pushWire(src, d);
+          }
+          curSrc = null;
+          if (complete) {
+            pruneWires();
+            rebuildWireUsage();
+            const next = netRouteCost(src);
+            if (improves(next, quality)) { quality = next; saved = wires.slice(); bestY = y; }
+          }
+          moveInput(bestY);
+          wires.splice(0, wires.length, ...saved);
+          rebuildWireUsage();
+        }
+        for (const e of connected) {
+          if (!canTry(src)) break;
+          const { points } = netGraph(connected, src);
+          const terminal = points.get(f(e.pin.x) + ',' + f(e.pin.y));
+          if (terminal.next.size !== 1) continue;
+          let current = terminal, next = [...current.next][0];
+          while (next) {
+            current.next.delete(next);
+            next.next.delete(current);
+            current = next;
+            if (current.terminal || current.next.size !== 1) break;
+            next = [...current.next][0];
+          }
+          const remaining = [];
+          points.forEach(a => a.next.forEach(b => {
+            if (a.x < b.x || (a.x === b.x && a.y < b.y)) remaining.push({ src, d: pathData([a, b]) });
+          }));
+          if (!remaining.length) continue;
+          const before = netRouteCost(src), original = wires.slice();
+          wires.splice(0, wires.length, ...wires.filter(w => w.src !== src), ...remaining);
+          rebuildWireUsage();
+          const d = branchRoute(e, before.violations ? Infinity : 0, before.violations > 0);
+          if (d != null) {
+            pushWire(src, d);
+            pruneWires();
+            rebuildWireUsage();
+            const after = netRouteCost(src);
+            if (improves(after, before)) continue;
+          }
+          wires.splice(0, wires.length, ...original);
+          rebuildWireUsage();
+        }
+      });
+      pruneWires();
+      rebuildWireUsage();
+    }
+
+    function alignGateOutputs() {
+      const savedWires = wires.slice();
+      const savedRows = new Map([...pos].map(([id, p]) => [id, p.y]));
+      const savedLabels = labelBoxes.slice(0, fixedLabelCount).map(b => ({ ...b }));
+      const savedSignals = new Map([...signalLabels].map(([id, signal]) => [id, signal.y]));
+      const quality = () => [...bySrc].filter(([, list]) => physicalEdges(list).length)
+        .map(([src]) => netRouteCost(src)).reduce((sum, q) => ({
+          cost: sum.cost + q.cost, crossings: sum.crossings + q.crossings, violations: sum.violations + q.violations
+        }), { cost: 0, crossings: 0, violations: 0 });
+      const before = quality();
+      let moved = false;
+      [...ids].reverse().forEach(src => {
+        const p = pos.get(src), connected = physicalEdges(bySrc.get(src) || []);
+        if (!p.gate || connected.length !== 1) return;
+        const e = connected[0];
+        if (e.index == null || e.pin.below) return;
+        const pin = inPin(e.dst, e.index), dy = f(pin.y - p.y);
+        if (Math.abs(dy) < 0.1 || Math.abs(dy) > TRACK) return;
+        const box = { x1: p.x - 8, x2: p.x + p.w + outputLead(src),
+          y1: p.y + dy - p.h / 2 - 8, y2: p.y + dy + p.h / 2 + 24 };
+        const ownRefs = new Set(inputReferences.filter(ref => ref.dst === src).map(ref => ref.box));
+        if (labelBoxes.some(b => b.owner !== src && !ownRefs.has(b) && overlaps(box, b))) return;
+        if (ids.some(id => {
+          if (id === src) return false;
+          const q = pos.get(id);
+          return q.gate && overlaps(box, { x1: q.x, x2: q.x + q.w, y1: q.y - q.h / 2, y2: q.y + q.h / 2 });
+        })) return;
+        p.y = f(p.y + dy);
+        labelBoxes.filter(b => b.owner === src).forEach(b => { b.y1 += dy; b.y2 += dy; });
+        const signal = signalLabels.get(src);
+        if (signal) signal.y = f(signal.y + dy);
+        moved = true;
+      });
+      if (moved) {
+        inOrder.forEach((id, i) => { inputRows[i] = pos.get(id).y; });
+        refreshInputReferences();
+        routeAll();
+        optimizePhysicalWires();
+        const after = quality();
+        if (after.violations <= before.violations && after.crossings <= before.crossings && after.cost < before.cost - 0.1) return;
+        savedRows.forEach((y, id) => { pos.get(id).y = y; });
+        savedSignals.forEach((y, id) => { signalLabels.get(id).y = y; });
+        labelBoxes.splice(0, labelBoxes.length, ...savedLabels);
+        inOrder.forEach((id, i) => { inputRows[i] = pos.get(id).y; });
+        refreshPins();
+        refreshInputReferences();
+        wires.splice(0, wires.length, ...savedWires);
+        pruneWires();
+        rebuildWireUsage();
+      }
+    }
+    function straightenTerminalWires() {
+      const terminals = inOrder.map(src => ({ src, id: src, source: true }))
+        .concat(outputPorts.map(port => ({ src: port.src, id: port.dst, source: false })));
+      for (const { src, id, source } of terminals) {
+        const connected = physicalEdges(bySrc.get(src) || []);
+        if (!connected.length) continue;
+        const p = pos.get(id), pin = source ? outPin(src) : p;
+        const { points } = netGraph(connected, src);
+        const terminal = points.get(f(pin.x) + ',' + f(pin.y));
+        if (!terminal || terminal.next.size !== 1) continue;
+        const path = [terminal];
+        let previous = terminal, current = [...terminal.next][0];
+        for (;;) {
+          path.push(current);
+          if (current.terminal || current.next.size !== 2) break;
+          const next = [...current.next].find(q => q !== previous);
+          previous = current;
+          current = next;
+        }
+        const label = labelBoxes.find(b => source ? b.input === id : b.owner === id);
+        const originalY = p.y, saved = wires.slice(), before = netRouteCost(src);
+        const setRow = y => {
+          const dy = y - p.y;
+          p.y = y;
+          label.y1 += dy;
+          label.y2 += dy;
+          if (!source) {
+            const i = edges.findIndex(e => e.dst === id);
+            edges[i].pin.y = pinPts[i].y = y;
+          }
+        };
+        const candidates = path.slice(1).map((anchor, i) => ({ anchor, cut: i + 1 }));
+        if (source) points.forEach(anchor => {
+          if (!path.includes(anchor)) candidates.push({ anchor, cut: path.length - 1 });
+        });
+        let removed = 0;
+        for (const { anchor, cut } of candidates) {
+          while (removed < cut) {
+            const a = path[removed], b = path[++removed];
+            a.next.delete(b);
+            b.next.delete(a);
+          }
+          const y = anchor.y;
+          if (y === originalY || (source ? anchor.x <= pin.x : anchor.x >= pin.x)) continue;
+          const box = source ? inputBox(id, p.x, y)
+            : { ...label, y1: label.y1 + y - p.y, y2: label.y2 + y - p.y };
+          if (y < 14 || y > height - 14 || labelBoxes.some(b => b !== label && overlaps(box, b))
+            || usedH.some(u => u.src !== src && overlaps(box, { x1: u.x1, x2: u.x2, y1: u.y - 4, y2: u.y + 4 }))
+            || usedV.some(u => u.src !== src && overlaps(box, { x1: u.x - 4, x2: u.x + 4, y1: u.y1, y2: u.y2 }))) continue;
+          setRow(y);
+          const lo = Math.min(pin.x, anchor.x), hi = Math.max(pin.x, anchor.x);
+          const landing = new Set(connected.filter(e => !e.pin.below && e.pin.x === hi && e.pin.y === y).map(e => e.dst));
+          const clear = !hBlockers(y, lo, hi, null, landing).length
+            && !usedH.some(u => u.src !== src && Math.abs(u.y - y) < 8 && Math.min(hi, u.x2) - Math.max(lo, u.x1) > 0.1)
+            && !usedV.some(u => u.src !== src && u.x >= lo && u.x <= hi && y >= u.y1 && y <= u.y2
+              && Math.min(u.x - lo, hi - u.x, y - u.y1, u.y2 - y) < 4);
+          if (clear) {
+            const remaining = [];
+            points.forEach(a => a.next.forEach(b => {
+              if (a.x < b.x || (a.x === b.x && a.y < b.y)) remaining.push({ src, d: pathData([a, b]) });
+            }));
+            wires.splice(0, wires.length, ...saved.filter(w => w.src !== src), ...remaining,
+              { src, d: pathData([{ x: lo, y }, { x: hi, y }]) });
+            pruneWires();
+            rebuildWireUsage();
+            const after = netRouteCost(src);
+            if (after.violations <= before.violations && after.crossings <= before.crossings && after.cost < before.cost - 0.1) break;
+          }
+          setRow(originalY);
+          wires.splice(0, wires.length, ...saved);
+          rebuildWireUsage();
+        }
+      }
+      pruneWires();
+      rebuildWireUsage();
+    }
 
     function countInputCrossings() {
       const byNet = new Map(), byGate = new Map(), byInput = new Map();
@@ -1876,7 +2216,14 @@
         box.x2 += shift;
       });
       signalLabels.forEach((signal, id) => { signal.x = f(outPin(id).x + 6); });
-      referenced.forEach(e => {
+      refreshInputReferences();
+      width = outputX + Math.max(90, ...roots.map(r => r.label.length * 7.5 + 20));
+      height = Math.max(height, ...labelBoxes.map(box => box.y2 + 40));
+    }
+    function refreshInputReferences() {
+      inputReferences.length = 0;
+      labelBoxes.length = fixedLabelCount;
+      edges.filter(e => namedInputs.has(e)).forEach(e => {
         const ref = inputReference(e);
         inputReferences.push(ref);
         labelBoxes.push(ref.box);
@@ -1886,8 +2233,6 @@
         const pin = outPin(src), end = sourceStub(src);
         labelBoxes.push({ x1: pin.x - 2, x2: end.x + 8, y1: pin.y - 8, y2: pin.y + 8 });
       });
-      width = outputX + Math.max(90, ...roots.map(r => r.label.length * 7.5 + 20));
-      height = Math.max(height, ...labelBoxes.map(box => box.y2 + 40));
     }
 
     function pruneWires() {
@@ -2023,12 +2368,9 @@
     /* nodes */
     ids.forEach(id => {
       const p = pos.get(id), nd = nodes[id];
-      if (nd.type === 'IN') {
+      if (!p.gate) {
         svg.push('<circle class="term"' + netAttr(id) + ' cx="' + (p.x + 6) + '" cy="' + p.y + '" r="3.2"/>');
-        svg.push('<text x="' + (p.x - 6) + '" y="' + (p.y + 4) + '" text-anchor="end" class="lbl"' + netAttr(id) + '>' + esc(nd.label) + '</text>');
-      } else if (nd.type === 'CONST0' || nd.type === 'CONST1') {
-        svg.push('<rect class="gb" x="' + p.x + '" y="' + (p.y - 10) + '" width="26" height="20" rx="4"/>');
-        svg.push('<text x="' + (p.x + 13) + '" y="' + (p.y + 4) + '" text-anchor="middle" class="lbl"' + netAttr(id) + '>' + (nd.type === 'CONST1' ? '1' : '0') + '</text>');
+        svg.push('<text x="' + (p.x - 6) + '" y="' + (p.y + 4) + '" text-anchor="end" class="lbl"' + netAttr(id) + '>' + esc(labelOf(id)) + '</text>');
       } else {
         svg.push(gateSvg(nd, p));
       }
