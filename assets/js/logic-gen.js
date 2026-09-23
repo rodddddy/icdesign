@@ -545,7 +545,8 @@
       while (list.length > stage.count) {
         const count = Math.min(stage.count, list.length - stage.count + 1);
         const pins = list.splice(0, count);
-        while (pins.length < stage.count) pins.push(b.const0());
+        const inputCount = sizes.get(stage.type).find(n => n >= count);
+        while (pins.length < inputCount) pins.push(b.const0());
         list.push(b.gate(stage.type, pins));
         // Each intermediate XNOR flips parity once, regardless of its input count.
         if (stage.type === 'XNOR') inverted = !inverted;
@@ -1792,6 +1793,7 @@
     optimizePhysicalWires();
     alignGateOutputs();
     straightenTerminalWires();
+    restoreInputConnections();
 
     function rebuildWireUsage() {
       usedH.length = usedV.length = 0;
@@ -1867,6 +1869,80 @@
         if (!restored) break;
       }
       refreshInputReferences();
+    }
+    function restoreInputConnections() {
+      let restored = false;
+      for (const src of inOrder) {
+        const list = bySrc.get(src) || [];
+        if (!list.length || physicalEdges(list).length) continue;
+        const p = pos.get(src), originalY = p.y, saved = wires.slice();
+        const label = labelBoxes.find(b => b.input === src);
+        const moveInput = y => {
+          p.y = y;
+          Object.assign(label, { ...inputBox(src, p.x, y), x2: p.x - 2 });
+        };
+        let best = null;
+        const beforeCrossings = countInputCrossings().byGate;
+        for (let crossingLimit = 0; crossingLimit < 4 && !best; crossingLimit++) {
+          for (const e of list) {
+            namedInputs.delete(e);
+            refreshInputReferences();
+            wires.splice(0, wires.length, ...saved.filter(w => w.src !== src));
+            rebuildWireUsage();
+            const targetY = f(e.pin.y + (e.pin.below || 0));
+            const rows = new Set([targetY, originalY, targetY - TRACK, targetY + TRACK,
+              targetY - 2 * TRACK, targetY + 2 * TRACK]);
+            pos.forEach(q => {
+              if (!q.gate || q.x >= e.pin.x) return;
+              rows.add(f(q.y - q.h / 2 - 18));
+              rows.add(f(q.y + q.h / 2 + 30));
+            });
+            labelBoxes.forEach(b => {
+              if (b === label || b.x1 >= e.pin.x) return;
+              rows.add(f(b.y1 - 8));
+              rows.add(f(b.y2 + 8));
+            });
+            for (const y of rows) {
+              const box = inputBox(src, p.x, y);
+              if (y < 14 || y > height - 14 || labelBoxes.some(b => b !== label && overlaps(box, b))
+                || usedH.some(u => u.src !== src && overlaps(box, { x1: u.x1, x2: u.x2, y1: u.y - 4, y2: u.y + 4 }))
+                || usedV.some(u => u.src !== src && overlaps(box, { x1: u.x - 4, x2: u.x + 4, y1: u.y1, y2: u.y2 }))) continue;
+              moveInput(y);
+              curSrc = src;
+              const d = simpleRoute(src, outPin(src), { ...e.pin, below: e.pin.below || 0, dst: e.dst },
+                new Set([e.dst]), false, crossingLimit, false);
+              curSrc = null;
+              if (d == null) continue;
+              const cost = pathCost(d), movement = Math.abs(y - originalY);
+              if (best && (cost > best.cost || (cost === best.cost && movement >= best.movement))) continue;
+              if (crossingLimit) {
+                pushWire(src, d);
+                const crowded = [...countInputCrossings().byGate].some(([id, crossings]) =>
+                  crossings.size >= 4 && crossings.size > (beforeCrossings.get(id)?.size || 0));
+                wires.pop();
+                rebuildWireUsage();
+                if (crowded) continue;
+              }
+              best = { e, y, d, cost, movement };
+            }
+            namedInputs.add(e);
+            moveInput(originalY);
+          }
+        }
+        wires.splice(0, wires.length, ...saved);
+        if (best) {
+          namedInputs.delete(best.e);
+          moveInput(best.y);
+          wires.splice(0, wires.length, ...saved.filter(w => w.src !== src), { src, d: best.d });
+          restored = true;
+        }
+        refreshInputReferences();
+        rebuildWireUsage();
+      }
+      if (restored) {
+        pruneWires();
+        rebuildWireUsage();
+      }
     }
     function netRouteCost(src) {
       let cost = wires.filter(w => w.src === src).reduce((sum, w) => sum + pathCost(w.d), 0);
