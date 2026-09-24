@@ -232,9 +232,13 @@
         if (id == null) { id = reg('IN', [], { label: name }); memo['in:' + name] = id; }
         return id;
       },
+      dff(data, clock, reset, edge = 'rising') {
+        return reg('DFF', [data, clock, reset], { edge });
+      },
       const0() { let id = keyOf('c0'); if (id == null) { id = reg('CONST0', []); memo['c0'] = id; } return id; },
       const1() { let id = keyOf('c1'); if (id == null) { id = reg('CONST1', []); memo['c1'] = id; } return id; },
       not(a) {
+        if (nodes[a].complement !== undefined) return nodes[a].complement;
         if (nodes[a].type === 'INV') return nodes[a].ins[0];
         if (isC0(a)) return api.const1();
         if (isC1(a)) return api.const0();
@@ -299,6 +303,7 @@
   /* Inversion under library constraints. */
   function makeNot(b, a, lib) {
     const nd = b.nodes[a];
+    if (nd.complement !== undefined) return nd.complement;
     if (nd.type === 'CONST0') return b.const1();
     if (nd.type === 'CONST1') return b.const0();
     if (nd.type === 'INV') return nd.ins[0];
@@ -498,6 +503,7 @@
     };
     const invert = id => {
       const nd = b.nodes[id];
+      if (nd.complement !== undefined) return nd.complement;
       if (nd.type === 'CONST0') return b.const1();
       if (nd.type === 'CONST1') return b.const0();
       if (nd.type === 'INV') return nd.ins[0];
@@ -828,7 +834,8 @@
     XNOR:   { w: 52, base: 32, gap: 16, bubble: true, xorCurve: true },
     INV:    { w: 32, base: 24, gap: 16, bubble: true, tri: true },
     BUF:    { w: 32, base: 24, gap: 16, tri: true },
-    MUX:    { w: 62, base: 0, gap: 18, mux: true }
+    MUX:    { w: 62, base: 0, gap: 18, mux: true },
+    DFF:    { w: 62, base: 80, gap: 20, storage: true }
   };
 
   function muxSelCount(nd) { return nd.ins.length >= 6 ? 2 : 1; }
@@ -946,7 +953,13 @@
       colXs[lv] += labelSpace;
       (byLevel.get(lv) || []).forEach(id => { pos.get(id).x = colX(lv); });
     }
-    const outputLead = src => signalLabels.has(src) ? signalLabels.get(src).width + 12 : 18;
+    const complementaryOutput = id => {
+      const p = pos.get(id), nd = nodes[id];
+      const text = (nd.label || gateNames.get(id)) + '′';
+      return { x: f(p.x + p.w), y: f(p.y + p.h / 4), text, width: text.length * 6 };
+    };
+    const outputLead = src => Math.max(signalLabels.has(src) ? signalLabels.get(src).width + 12 : 18,
+      nodes[src].type === 'DFF' ? complementaryOutput(src).width + 24 : 0);
 
     const pinOrder = new Map();
     function assignPinOrder() {
@@ -989,6 +1002,7 @@
       const ys = pinYs(nd.type, nd.ins.length);
       i = pinOrder.has(id) ? pinOrder.get(id)[i] : i;
       let px = p.x;
+      if (g.storage && i === 1 && nd.edge === 'falling') px -= 10;
       if (isOrType(nd.type)) {
         const t = 0.5 - ys[i] / p.h;
         px = p.x + 2 * t * (1 - t) * 0.34 * g.w;
@@ -1012,6 +1026,10 @@
       if (!p.gate) return { x: p.x + 6, y: p.y };
       return { x: p.x + p.w, y: p.y };
     }
+    function gateLeft(id) {
+      const nd = nodes[id];
+      return pos.get(id).x - (nd.type === 'DFF' && nd.edge === 'falling' ? 10 : 0);
+    }
 
     const labelBoxes = [];
     ids.forEach(id => {
@@ -1021,6 +1039,11 @@
         const cx = f(p.x + p.w / 2), baseline = f(p.y + p.h / 2 + 14);
         const half = gateNames.get(id).length * 3 + 4;
         labelBoxes.push({ owner: id, x1: cx - half, x2: cx + half, y1: baseline - 13, y2: baseline + 6 });
+      }
+      if (nd.type === 'DFF') {
+        const pin = complementaryOutput(id);
+        labelBoxes.push({ owner: id, x1: pin.x - 1, x2: pin.x + Math.max(28, pin.width + 20),
+          y1: pin.y - 18, y2: pin.y + 8 });
       }
       const signal = signalLabels.get(id);
       if (!signal) return;
@@ -1049,7 +1072,7 @@
           if (other === id) return false;
           const q = pos.get(other);
           return overlaps(box, !q.gate ? inputBox(other, q.x, q.y)
-            : { x1: q.x - 8, x2: q.x + q.w + 8, y1: q.y - q.h / 2 - 8, y2: q.y + q.h / 2 + 8 });
+            : { x1: gateLeft(other) - 8, x2: q.x + q.w + 8, y1: q.y - q.h / 2 - 8, y2: q.y + q.h / 2 + 8 });
         })) continue;
         const score = pins.reduce((sum, pin) => sum
           + Math.abs(pin.y + (pin.below || 0) - y) * (pin.x < nearX + 20 ? 2 : 1), 0)
@@ -1148,10 +1171,10 @@
         const p = pos.get(id);
         if (!p.gate) return;
         if (allowDst && allowDst.has(id)) return;
-        const gy1 = p.y - p.h / 2, gy2 = p.y + p.h / 2;
+        const gy1 = p.y - p.h / 2, gy2 = p.y + p.h / 2, gx1 = gateLeft(id);
         if (y > gy1 - 8 && y < gy2 + 8
-          && p.x + p.w > x1 + 0.1 && p.x < x2 - 0.1) {
-          rs.push([p.x - 8, gy1 - 12, p.x + p.w + 8]);
+          && p.x + p.w > x1 + 0.1 && gx1 < x2 - 0.1) {
+          rs.push([gx1 - 8, gy1 - 12, p.x + p.w + 8]);
         }
       });
       labelBoxes.forEach(b => {
@@ -1196,7 +1219,7 @@
         const id = ids[i], p = pos.get(id);
         if (!p.gate) continue;
         if (allowDst && allowDst.has(id)) continue;
-        if (vx > p.x - 0.4 && vx < p.x + p.w + 0.4) {
+        if (vx > gateLeft(id) - 0.4 && vx < p.x + p.w + 0.4) {
           const o = Math.min(hi, p.y + p.h / 2 - 2) - Math.max(lo, p.y - p.h / 2 + 2);
           if (o > 1) return false;
         }
@@ -1303,7 +1326,7 @@
           const p = pos.get(id);
           if (!p.gate) return;
           if (allowDst && allowDst.has(id)) return;
-          if (fx > p.x + 1 && fx < p.x + p.w - 1 && fy > p.y - p.h / 2 + 1 && fy < p.y + p.h / 2 - 1) hit = id;
+          if (fx > gateLeft(id) + 1 && fx < p.x + p.w - 1 && fy > p.y - p.h / 2 + 1 && fy < p.y + p.h / 2 - 1) hit = id;
         });
         return hit;
       };
@@ -1340,7 +1363,7 @@
                 while (guard++ < 10) {
                   const gl = insideBody(l, L.y), gr = insideBody(r, L.y);
                   if (gl) l = pos.get(gl).x + pos.get(gl).w + 2;
-                  if (gr) r = pos.get(gr).x - 2;
+                  if (gr) r = gateLeft(gr) - 2;
                   const zl = gl ? null : vZone(l, L.y, ay, +1);
                   const zr = gr ? null : vZone(r, L.y, ay, -1);
                   if (zl != null) l = zl;
@@ -1394,7 +1417,7 @@
               const id = ids[i], p = pos.get(id);
               if (!p.gate) continue;
               if (allowDst && allowDst.has(id)) continue;
-              if (Math.min(p.x + p.w, dr) - Math.max(p.x, rx) > 2
+              if (Math.min(p.x + p.w, dr) - Math.max(gateLeft(id), rx) > 2
                 && yy > p.y - p.h / 2 - 0.6 && yy < p.y + p.h / 2 + 0.6) return true;
             }
             return false;
@@ -1406,6 +1429,7 @@
              clear bodies, pins, other nets' corridors and endpoints, and
              both detour verticals must be clean */
           const scanDy = (rx, dr) => {
+            if (epTaken(rx, L.y, skip) || epTaken(dr, L.y, skip)) return -1;
             const dySeen = new Set();
             for (let st = 0; st <= 64; st += 8) {
               const sgns = st === 0 ? [1] : [1, -1];
@@ -1547,6 +1571,45 @@
     const simpleRoute = (src, start, t, skip, branch, crossingLimit = Infinity, detours = true) => {
       if (finalRouting) start = { x: f(start.x), y: f(start.y) };
       const end = { x: t.x, y: t.y + t.below };
+      const landingTarget = new Set([t.dst]);
+      // Geometry and occupied wires stay fixed while this route's candidates are scored.
+      const checks = new Map(), endpoints = new Map();
+      const segmentCrossings = (horizontal, axis, lo, hi, landing) => {
+        const key = (horizontal ? 'h' : 'v') + axis + ',' + lo + ',' + hi + (landing ? ',1' : ',0');
+        if (checks.has(key)) return checks.get(key);
+        const count = () => {
+          let crossings = 0;
+          if (horizontal) {
+            if (hBlockers(axis, lo, hi, skip, landing).length) return -1;
+            for (const u of usedH) {
+              if (u.src !== src && Math.abs(u.y - axis) < 8 && Math.min(hi, u.x2) - Math.max(lo, u.x1) > 0.1) return -1;
+            }
+            for (const u of usedV) {
+              if (u.src === src || u.x < lo || u.x > hi || axis < u.y1 || axis > u.y2) continue;
+              if (Math.min(u.x - lo, hi - u.x, axis - u.y1, u.y2 - axis) < 4) return -1;
+              if (++crossings > crossingLimit) return -1;
+            }
+          } else {
+            if (!vClean2(axis, lo, hi, landing, skip)) return -1;
+            for (const u of usedV) {
+              if (u.src !== src && Math.abs(u.x - axis) < 8 && Math.min(hi, u.y2) - Math.max(lo, u.y1) > 0.1) return -1;
+            }
+            for (const u of usedH) {
+              if (u.src === src || u.y < lo || u.y > hi || axis < u.x1 || axis > u.x2) continue;
+              if (Math.min(u.y - lo, hi - u.y, axis - u.x1, u.x2 - axis) < 4) return -1;
+              if (++crossings > crossingLimit) return -1;
+            }
+          }
+          return crossings;
+        };
+        checks.set(key, count());
+        return checks.get(key);
+      };
+      const endpointTaken = (x, y) => {
+        const key = x + ',' + y;
+        if (!endpoints.has(key)) endpoints.set(key, epTaken(x, y, skip));
+        return endpoints.get(key);
+      };
       const candidates = [];
       const consider = points => {
         if (t.below) points.push({ x: t.x, y: t.y });
@@ -1560,29 +1623,10 @@
           const a = ps[i - 1], b = ps[i], horizontal = a.y === b.y;
           const lo = horizontal ? Math.min(a.x, b.x) : Math.min(a.y, b.y);
           const hi = horizontal ? Math.max(a.x, b.x) : Math.max(a.y, b.y);
-          const landing = i === ps.length - 1 ? new Set([t.dst]) : null;
-          if (horizontal) {
-            if (hBlockers(a.y, lo, hi, skip, landing).length) return;
-            for (const u of usedH) {
-              if (u.src !== src && Math.abs(u.y - a.y) < 8 && Math.min(hi, u.x2) - Math.max(lo, u.x1) > 0.1) return;
-            }
-            for (const u of usedV) {
-              if (u.src === src || u.x < lo || u.x > hi || a.y < u.y1 || a.y > u.y2) continue;
-              if (Math.min(u.x - lo, hi - u.x, a.y - u.y1, u.y2 - a.y) < 4) return;
-              if (++crossings > crossingLimit) return;
-            }
-          } else {
-            if (!vClean2(a.x, lo, hi, landing, skip)) return;
-            for (const u of usedV) {
-              if (u.src !== src && Math.abs(u.x - a.x) < 8 && Math.min(hi, u.y2) - Math.max(lo, u.y1) > 0.1) return;
-            }
-            for (const u of usedH) {
-              if (u.src === src || u.y < lo || u.y > hi || a.x < u.x1 || a.x > u.x2) continue;
-              if (Math.min(u.y - lo, hi - u.y, a.x - u.x1, u.x2 - a.x) < 4) return;
-              if (++crossings > crossingLimit) return;
-            }
-          }
-          if (epTaken(b.x, b.y, skip)) return;
+          const landing = i === ps.length - 1 ? landingTarget : null;
+          const crossed = segmentCrossings(horizontal, horizontal ? a.y : a.x, lo, hi, landing);
+          if (crossed < 0 || (crossings += crossed) > crossingLimit) return;
+          if (endpointTaken(b.x, b.y)) return;
           length += hi - lo;
           if (branch) {
             const covered = (horizontal ? usedH : usedV)
@@ -1614,10 +1658,25 @@
         });
         labelBoxes.forEach(b => { rows.add(b.y1 - 8); rows.add(b.y2 + 8); });
         for (let y = 12; y < topMargin; y += TRACK) rows.add(y);
-        const riseXs = xs.slice(0, 5), dropXs = xs.slice(-5);
+        const coordinate = value => finalRouting ? f(value) : value;
+        const sy = coordinate(start.y), ey = coordinate(end.y), ex = coordinate(end.x);
+        const riseXs = xs.slice(0, 5).filter(x => {
+          const rx = coordinate(x);
+          if (rx === start.x) return branch;
+          if (!branch && rx < start.x + (signalLabels.has(src) ? outputLead(src) : 12)) return false;
+          return segmentCrossings(true, sy, Math.min(start.x, rx), Math.max(start.x, rx), null) >= 0
+            && !endpointTaken(rx, sy);
+        });
+        const dropXs = xs.slice(-5).filter(x => segmentCrossings(true, ey, coordinate(x), ex, t.below ? null : landingTarget) >= 0
+          && !endpointTaken(ex, ey));
         for (const y of rows) {
-          if (y < 8 || y > height - 8) continue;
-          for (const x1 of riseXs) for (const x2 of dropXs) {
+          const ry = coordinate(y);
+          if (y < 8 || y > height - 8 || ry === sy || ry === ey) continue;
+          const rises = riseXs.filter(x => segmentCrossings(false, coordinate(x), Math.min(sy, ry), Math.max(sy, ry), null) >= 0
+            && !endpointTaken(coordinate(x), ry));
+          const drops = dropXs.filter(x => segmentCrossings(false, coordinate(x), Math.min(ry, ey), Math.max(ry, ey), null) >= 0
+            && !endpointTaken(coordinate(x), ey));
+          for (const x1 of rises) for (const x2 of drops) {
             if (x2 - x1 < TRACK) continue;
             consider([start, { x: x1, y: start.y }, { x: x1, y }, { x: x2, y }, { x: x2, y: end.y }, end]);
           }
@@ -2168,14 +2227,14 @@
         if (e.index == null || e.pin.below) return;
         const pin = inPin(e.dst, e.index), dy = f(pin.y - p.y);
         if (Math.abs(dy) < 0.1 || Math.abs(dy) > TRACK) return;
-        const box = { x1: p.x - 8, x2: p.x + p.w + outputLead(src),
+        const box = { x1: gateLeft(src) - 8, x2: p.x + p.w + outputLead(src),
           y1: p.y + dy - p.h / 2 - 8, y2: p.y + dy + p.h / 2 + 24 };
         const ownRefs = new Set(inputReferences.filter(ref => ref.dst === src).map(ref => ref.box));
         if (labelBoxes.some(b => b.owner !== src && !ownRefs.has(b) && overlaps(box, b))) return;
         if (ids.some(id => {
           if (id === src) return false;
           const q = pos.get(id);
-          return q.gate && overlaps(box, { x1: q.x, x2: q.x + q.w, y1: q.y - q.h / 2, y2: q.y + q.h / 2 });
+          return q.gate && overlaps(box, { x1: gateLeft(id), x2: q.x + q.w, y1: q.y - q.h / 2, y2: q.y + q.h / 2 });
         })) return;
         p.y = f(p.y + dy);
         labelBoxes.filter(b => b.owner === src).forEach(b => { b.y1 += dy; b.y2 += dy; });
@@ -2479,7 +2538,7 @@
       return cleaned;
     }
     const svg = [];
-    const netAttr = src => dl ? '' : ' data-net="' + src + '"';
+    const netAttr = src => dl ? '' : ' data-net="' + (opts?.netAliases?.[src] ?? src) + '"';
     svg.push('<svg xmlns="http://www.w3.org/2000/svg" width="' + width + '" height="' + height + '" viewBox="0 0 ' + width + ' ' + height + '" font-family="Consolas,Menlo,monospace" font-size="12">');
     if (dl) svg.push('<rect x="0" y="0" width="' + width + '" height="' + height + '" fill="#ffffff"/>');
     svg.push('<defs><style>'
@@ -2548,6 +2607,20 @@
       let s = '';
       if (g.tri) {
         s += '<path class="gb" d="M ' + f(x) + ' ' + f(top) + ' L ' + f(x + bw) + ' ' + f(yc) + ' L ' + f(x) + ' ' + f(top + h) + ' Z"/>';
+      } else if (g.storage) {
+        const ys = pinYs(nd.type, nd.ins.length), clockY = yc + ys[1];
+        const qb = complementaryOutput(nd.id);
+        s += '<rect class="gb" x="' + f(x) + '" y="' + f(top) + '" width="' + bw + '" height="' + h + '"/>';
+        s += '<text class="gt" x="' + f(x + 9) + '" y="' + f(yc + ys[0] + 3) + '">D</text>';
+        s += '<text class="gt"' + netAttr(nd.ins[2]) + ' x="' + f(x + 9) + '" y="' + f(yc + ys[2] + 3) + '">RST</text>';
+        s += '<text class="gt"' + netAttr(nd.id) + ' x="' + f(x + bw - 13) + '" y="' + f(yc + 3) + '">Q</text>';
+        s += '<path class="gc" d="M ' + f(x) + ' ' + f(clockY - 5) + ' L ' + f(x + 8) + ' ' + f(clockY) + ' L ' + f(x) + ' ' + f(clockY + 5) + '"/>';
+        if (nd.edge === 'falling') s += '<circle class="bb" cx="' + f(x - 5) + '" cy="' + f(clockY) + '" r="5"/>';
+        s += '<g class="dff-complement"' + netAttr(nd.id + ':Q_BAR') + '>';
+        s += '<text class="gt" x="' + f(x + bw - 19) + '" y="' + f(qb.y + 3) + '">Q′</text>';
+        s += '<circle class="bb" cx="' + f(qb.x + 5) + '" cy="' + qb.y + '" r="5"/>';
+        s += '<path class="gl" d="M ' + f(qb.x + 10) + ' ' + qb.y + ' H ' + f(qb.x + 26) + '"/>';
+        s += '<text class="net-label" x="' + f(qb.x + 14) + '" y="' + f(qb.y - 6) + '">' + esc(qb.text) + '</text></g>';
       } else if (g.mux) {
         const nSel = muxSelCount(nd);
         const dataN = nd.ins.length - nSel;
@@ -2608,9 +2681,9 @@
   /* ---------------------------------------------------------- *
    *  Browser UI wiring                                          *
    * ---------------------------------------------------------- */
-  const CORE = { bitsOf, minimizeSOP, coverSOP, anfCoefficients, mergeXorPair, makeBuilder, synthesize, compileExpression, renderSvg };
+  const CORE = { bitsOf, minimizeSOP, coverSOP, anfCoefficients, mergeXorPair, makeBuilder, synthesize, compileExpression, exprHtml, exprText, tableHtml, renderSvg };
   if (typeof module !== 'undefined' && module.exports) module.exports = CORE;
-  if (typeof window !== 'undefined') window.ICLogic = CORE;
+  if (typeof self !== 'undefined') self.ICLogic = CORE;
 
   if (typeof document === 'undefined') return;
 
@@ -2631,6 +2704,7 @@
   const $$ = s => Array.from(document.querySelectorAll(s));
 
   function init() {
+    if (!$('#in-list')) return;
     buildGateChips();
     renderSignalList('in');
     renderSignalList('out');
@@ -2797,6 +2871,93 @@
     $('#expression-operators').replaceChildren(...operators.map(args => expressionButton(...args)));
   }
 
+  function highlightedExpressionField(field) {
+    const wrapper = document.createElement('div');
+    wrapper.className = 'expression-field';
+    const overlay = document.createElement('div');
+    overlay.className = 'expression-highlights';
+    overlay.setAttribute('aria-hidden', 'true');
+    const mirror = document.createElement('div');
+    mirror.className = 'expression-mirror';
+    // A single text run avoids cumulative glyph rounding differences from the native input.
+    const text = document.createTextNode(''), range = document.createRange();
+    const marks = Array.from({ length: 2 }, () => {
+      const mark = document.createElement('span');
+      mark.className = 'matched';
+      mark.hidden = true;
+      return mark;
+    });
+    mirror.append(text, ...marks);
+    overlay.appendChild(mirror);
+    wrapper.append(overlay, field);
+    let brackets = [], pointer = null;
+
+    const clearHighlight = () => { marks.forEach(mark => { mark.hidden = true; }); };
+    const rectAt = index => {
+      range.setStart(text, index);
+      range.setEnd(text, index + 1);
+      return range.getBoundingClientRect();
+    };
+    const highlightAtPointer = () => {
+      clearHighlight();
+      if (!pointer) return;
+      const bounds = overlay.getBoundingClientRect();
+      if (pointer.x < bounds.left || pointer.x >= bounds.right
+        || pointer.y < bounds.top || pointer.y >= bounds.bottom) return;
+      let hit, left = 0, right = brackets.length - 1;
+      while (left <= right) {
+        const middle = (left + right) >> 1;
+        const rect = rectAt(brackets[middle].index);
+        if (pointer.x < rect.left) right = middle - 1;
+        else if (pointer.x >= rect.right) left = middle + 1;
+        else {
+          if (pointer.y >= rect.top && pointer.y < rect.bottom) hit = brackets[middle];
+          break;
+        }
+      }
+      if (!hit || !hit.partner) return;
+      const origin = mirror.getBoundingClientRect();
+      const rects = [rectAt(hit.index), rectAt(hit.partner.index)];
+      marks.forEach((mark, i) => {
+        const rect = rects[i];
+        mark.style.left = (rect.left - origin.left) + 'px';
+        mark.style.top = (rect.top - origin.top) + 'px';
+        mark.style.width = rect.width + 'px';
+        mark.style.height = rect.height + 'px';
+        mark.hidden = false;
+      });
+    };
+    const syncScroll = () => {
+      mirror.style.transform = 'translateX(' + -field.scrollLeft + 'px)';
+      highlightAtPointer();
+    };
+    const rebuild = () => {
+      brackets = [];
+      text.data = field.value;
+      const stack = [];
+      for (const match of field.value.matchAll(/[()]/g)) {
+        const bracket = { index: match.index, partner: null };
+        brackets.push(bracket);
+        if (match[0] === '(') stack.push(bracket);
+        else if (stack.length) {
+          bracket.partner = stack.pop();
+          bracket.partner.partner = bracket;
+        }
+      }
+      syncScroll();
+    };
+    field.addEventListener('pointermove', event => {
+      pointer = { x: event.clientX, y: event.clientY };
+      syncScroll();
+    });
+    field.addEventListener('pointerleave', () => { pointer = null; clearHighlight(); });
+    field.addEventListener('blur', () => { pointer = null; clearHighlight(); });
+    field.addEventListener('input', rebuild);
+    field.addEventListener('scroll', syncScroll);
+    rebuild();
+    return wrapper;
+  }
+
   function renderExpressionEditor() {
     const editor = $('#expression-editor');
     editor.replaceChildren();
@@ -2827,7 +2988,7 @@
       field.addEventListener('keydown', e => {
         if (e.key === 'Enter' && !e.isComposing) { e.preventDefault(); onGenerate(); }
       });
-      row.append(label, field);
+      row.append(label, highlightedExpressionField(field));
       editor.appendChild(row);
     });
     refreshExpressionSignals();

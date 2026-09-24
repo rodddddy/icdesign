@@ -1,0 +1,140 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Typical Digital Circuit Generator — ICDesign Lab</title>
+  <meta name="description" content="Generate typical digital circuits with configurable basic gates: half and full adders, one-hot and thermometer decoders, encoders, multiplexers, code converters, counters, shift registers and SR latches.">
+  <link rel="stylesheet" href="../assets/css/style.css">
+  <link rel="stylesheet" href="../assets/css/typical-circuits.css">
+  <link rel="icon" href="data:image/svg+xml,&lt;svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'&gt;&lt;rect x='2' y='2' width='12' height='12' rx='2' fill='%2322d3ee'/&gt;&lt;/svg&gt;">
+</head>
+<body class="typical-page">
+  <header class="topbar">
+    <div class="topbar-inner">
+      <a class="brand" href="../index.html"><span class="chip-dot"></span>ICDesign Lab</a>
+      <nav class="topnav" aria-label="Main navigation">
+        <a href="../index.html">Tools</a>
+        <a href="https://github.com/rodddddy/icdesign" target="_blank" rel="noopener">GitHub</a>
+      </nav>
+    </div>
+  </header>
+
+  <main class="wrap">
+    <div class="tool-header">
+      <a class="back-link" href="../index.html">&larr; All tools</a>
+      <h1>Typical Digital Circuit Generator</h1>
+      <p>Choose a circuit, adjust its options, and map it to your gate library.
+         Get truth tables and minimized expressions for combinational logic,
+         or a schematic and illustrative timing waves for sequential logic.</p>
+    </div>
+
+    <noscript><div class="error-box">Enable JavaScript to configure and generate circuits. All processing runs in your browser.</div></noscript>
+
+    <form id="typical-form" novalidate>
+      <section class="panel" aria-labelledby="typical-config-heading">
+        <h2 id="typical-config-heading"><span class="step-num">1</span>Circuit &amp; options</h2>
+        <p class="hint">Only options relevant to the selected circuit are shown. Changing the circuit restores its defaults.</p>
+        <div class="typical-family typical-field">
+          <label for="typical-type">Circuit</label>
+          <select id="typical-type" name="type" required aria-describedby="typical-option-status"></select>
+        </div>
+        <div class="typical-fields" id="typical-fields"></div>
+        <p class="hint typical-option-status" id="typical-option-status" role="status" aria-live="polite"></p>
+        <div class="typical-summary" id="typical-summary" hidden>
+          <div class="typical-summary-title">
+            <h3 id="typical-summary-title"></h3>
+            <span class="tool-tag" id="typical-kind"></span>
+          </div>
+          <dl class="typical-io">
+            <div><dt>External inputs</dt><dd id="typical-inputs"></dd></div>
+            <div><dt>Outputs</dt><dd id="typical-outputs"></dd></div>
+          </dl>
+          <ul class="typical-notes" id="typical-notes"></ul>
+        </div>
+      </section>
+
+      <section class="panel" aria-labelledby="typical-gates-heading">
+        <h2 id="typical-gates-heading"><span class="step-num">2</span>Gates &amp; specifications</h2>
+        <p class="hint">Choose gate types and allowed input counts: <strong>2, 3 and/or 4 inputs</strong>, all selected by default.
+           Click a gate name to toggle its specs. INV always has 1 input; multi-input XNOR inverts XOR parity.</p>
+        <p class="hint">Multiplexing uses the selected basic gates, not a MUX cell. SR latches require the matching NAND or NOR gate type.
+           Edge-triggered circuits require D flip-flops; these stay selected even with Select none.</p>
+        <div class="chipbar">
+          <button class="btn-add" id="typical-select-all" type="button">Select all</button>
+          <button class="btn-add" id="typical-select-none" type="button">Select none</button>
+        </div>
+        <div class="gate-chips" id="typical-gates">
+          <div class="gate-chip typical-dff" id="typical-dff-chip" role="group" aria-labelledby="typical-dff-label" hidden>
+            <label class="gate-type" for="typical-dff">
+              <input type="checkbox" id="typical-dff" disabled aria-describedby="typical-dff-spec">
+              <span id="typical-dff-label">D flip-flop</span>
+            </label>
+            <div class="gate-unary" id="typical-dff-spec">D / CLK / RST → Q / Q′</div>
+          </div>
+        </div>
+      </section>
+
+      <div class="generate-bar">
+        <button class="btn-add typical-generate" id="typical-generate" type="submit">Generate circuit</button>
+        <span class="tt-meta" id="typical-generate-status" role="status" aria-live="polite">Choose your circuit and gate library, then generate.</span>
+      </div>
+    </form>
+
+    <div id="typical-error" role="alert" hidden></div>
+
+    <section class="panel" id="typical-results" aria-labelledby="typical-results-heading" hidden>
+      <h2 id="typical-results-heading"><span class="step-num">3</span>Results</h2>
+      <p class="hint" id="typical-result-title"></p>
+
+      <div id="typical-combinational" hidden>
+        <h3 class="typical-result-heading">Minimized expressions</h3>
+        <div id="typical-expressions"></div>
+        <hr class="sep">
+        <h3 class="typical-result-heading">Truth table</h3>
+        <div class="tt-wrap" id="typical-table" tabindex="0" role="region" aria-label="Generated truth table"></div>
+        <div class="chipbar">
+          <button class="btn-add" id="typical-download-csv" type="button">Download truth table CSV</button>
+        </div>
+        <hr class="sep">
+      </div>
+
+      <h3 class="typical-result-heading">Gate-level schematic</h3>
+      <div class="stat-chips" id="typical-stats"></div>
+      <p class="hint" id="typical-schematic-caption"></p>
+      <div class="circuit-box" id="typical-circuit" tabindex="0" role="region" aria-label="Gate-level schematic"></div>
+      <div class="circuit-toolbar">
+        <button class="btn-add" id="typical-download-svg" type="button">Download circuit SVG</button>
+        <button class="btn-add" id="typical-download-png" type="button">Download circuit PNG</button>
+        <span class="tt-meta">White-background exports · PNG at 2× resolution</span>
+      </div>
+
+      <div id="typical-timing" hidden>
+        <hr class="sep">
+        <h3 class="typical-result-heading">Ideal illustrative waveform</h3>
+        <p class="hint" id="typical-wave-caption"></p>
+        <p class="hint">Logical samples only: no physical propagation delays, setup/hold effects or analog behavior are simulated.</p>
+        <div class="circuit-box typical-wave-box" id="typical-wave" tabindex="0" role="region" aria-label="Ideal illustrative timing waveform"></div>
+        <div class="typical-wave-legend" aria-label="Waveform legend">
+          <span><i class="typical-legend-known" aria-hidden="true"></i>0 / 1: known logic</span>
+          <span><i class="typical-legend-unknown" aria-hidden="true"></i>X: unknown / invalid</span>
+          <span><i class="typical-legend-edge" aria-hidden="true"></i>Dashed guide: active clock edge (when present)</span>
+        </div>
+        <div class="circuit-toolbar">
+          <button class="btn-add" id="typical-download-wave" type="button">Download waveform SVG</button>
+          <button class="btn-add" id="typical-download-wave-png" type="button">Download waveform PNG</button>
+          <span class="tt-meta">White-background exports · PNG at 2× resolution</span>
+        </div>
+      </div>
+    </section>
+  </main>
+
+  <footer class="site-footer">
+    <div class="wrap">ICDesign Lab — static site deployed on Cloudflare Pages · source on GitHub</div>
+  </footer>
+
+  <script src="../assets/js/logic-gen.js"></script>
+  <script src="../assets/js/typical-core.js"></script>
+  <script src="../assets/js/typical-ui.js"></script>
+</body>
+</html>

@@ -202,9 +202,20 @@ footer.site-footer {
   align-items: center; gap: 10px; margin-bottom: 8px;
 }
 .expression-input-row label { color: var(--violet); font-family: var(--mono); min-width: 0; overflow-wrap: anywhere; }
+.expression-field { position: relative; min-width: 0; border-radius: 8px; background: var(--bg-soft); }
+.expression-input, .expression-mirror { font-family: var(--mono); font-size: 14px; line-height: 20px; }
+.expression-highlights {
+  position: absolute; inset: 1px 13px; overflow: hidden; pointer-events: none;
+  display: flex; align-items: center;
+}
+.expression-mirror { position: relative; flex: none; white-space: pre; color: transparent; }
+.expression-mirror .matched {
+  position: absolute; background: rgba(34, 211, 238, 0.3); border-radius: 2px;
+  box-shadow: inset 0 0 0 1px var(--accent);
+}
 .expression-input {
-  width: 100%; min-width: 0; background: var(--bg-soft); border: 1px solid var(--border);
-  color: var(--text); border-radius: 8px; padding: 8px 12px; font-family: var(--mono); font-size: 14px;
+  position: relative; display: block; width: 100%; min-width: 0; background: transparent;
+  border: 1px solid var(--border); color: var(--text); border-radius: 8px; padding: 8px 12px;
 }
 .expression-input:focus { border-color: var(--accent); }
 .expression-input.invalid, .expression-input[aria-invalid="true"] { border-color: var(--danger); }
