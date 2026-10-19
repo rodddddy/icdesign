@@ -461,6 +461,22 @@
     box.addEventListener('pointerleave', () => highlight(null));
   }
 
+  function bindWaveformHover() {
+    const box = $('typical-wave');
+    const highlight = target => {
+      const sample = target instanceof Element ? target.closest('[data-wave-sample]') : null;
+      const next = sample && box.contains(sample) ? sample : null;
+      const active = box.querySelector('.wave-sample-active');
+      if (active === next) return;
+      if (active) active.classList.remove('wave-sample-active');
+      if (next) next.classList.add('wave-sample-active');
+    };
+    box.addEventListener('pointerover', event => highlight(event.target));
+    box.addEventListener('pointerout', event => highlight(event.relatedTarget));
+    box.addEventListener('pointerleave', () => highlight(null));
+    box.addEventListener('pointercancel', () => highlight(null));
+  }
+
   function svgElement(tag, attrs = {}, text) {
     const node = document.createElementNS(NS, tag);
     Object.entries(attrs).forEach(([name, value]) => node.setAttribute(name, String(value)));
@@ -525,6 +541,11 @@
       svg.append(svgElement('line', { x1: x, x2: x, y1: top - 8, y2: bottom, stroke: color.output, opacity: 0.5, 'stroke-dasharray': '4 5' }));
       svg.append(svgElement('path', { d: 'M' + (x - 3) + ' ' + (top - 9) + 'h6l-3 5z', fill: color.output, opacity: 0.65 }));
     });
+    const sampleColumns = forDownload ? null : Array.from({ length: count }, (_, index) => {
+      const column = svgElement('g', { class: 'typical-wave-sample', 'data-wave-sample': index });
+      column.append(svgElement('rect', { x: left + index * step, y: top - 8, width: step, height: bottom - top + 8 }));
+      return column;
+    });
     waveform.channels.forEach((channel, row) => {
       const yHigh = top + row * rowHeight + 5;
       const yLow = yHigh + 25;
@@ -537,7 +558,7 @@
         const x = left + index * step;
         if (!known) {
           svg.append(svgElement('rect', { x, y: yHigh, width: step, height: yLow - yHigh, fill: 'url(#typical-wave-hatch)', stroke: color.unknown, 'stroke-width': 1 }));
-          svg.append(svgElement('text', { x: x + step / 2, y: yHigh + 17, 'text-anchor': 'middle', fill: color.unknown, 'font-weight': 'bold' }, 'X'));
+          (sampleColumns ? sampleColumns[index] : svg).append(svgElement('text', { x: x + step / 2, y: yHigh + 17, 'text-anchor': 'middle', fill: color.unknown, 'font-weight': 'bold' }, 'X'));
           continue;
         }
         const y = value === 1 ? yHigh : yLow;
@@ -545,9 +566,10 @@
         const next = channel.values[index + 1];
         if (index + 1 < count && (next === 0 || next === 1) && next !== value) path += 'V' + (next === 1 ? yHigh : yLow);
         svg.append(svgElement('path', { d: path, fill: 'none', stroke, 'stroke-width': 2, 'stroke-linejoin': 'round' }));
-        svg.append(svgElement('text', { x: x + step / 2, y: yHigh + 17, 'text-anchor': 'middle', fill: color.muted, 'font-size': 10 }, value));
+        (sampleColumns ? sampleColumns[index] : svg).append(svgElement('text', { x: x + step / 2, y: yHigh + 17, 'text-anchor': 'middle', fill: color.muted, 'font-size': 10 }, value));
       }
     });
+    if (sampleColumns) svg.append(...sampleColumns);
     svg.append(svgElement('text', { x: 24, y: bottom + 24, fill: color.muted, 'font-size': 11 }, '0 / 1 = known logic    X + hatching = unknown / invalid    Dashed guides = active clock edges (if present)'));
     captions.forEach((line, index) => svg.append(svgElement('text', { x: 24, y: bottom + 48 + index * 18, fill: color.muted, 'font-size': 12 }, line)));
     return { svg: new XMLSerializer().serializeToString(svg), width, height };
@@ -664,6 +686,7 @@
       $('typical-form').addEventListener('submit', onGenerate);
       window.addEventListener('pagehide', invalidate);
       bindCircuitHover();
+      bindWaveformHover();
       bindExport('typical-download-csv', exportCsv);
       bindExport('typical-download-svg', async result => {
         const rendered = await circuitForDownload(result);

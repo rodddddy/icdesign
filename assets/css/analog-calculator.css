@@ -1,0 +1,230 @@
+.analog-page {
+  color-scheme: dark;
+  overflow-wrap: anywhere;
+}
+
+.analog-page [hidden] { display: none !important; }
+.analog-page .wrap, .analog-page .panel { min-width: 0; }
+.analog-page .tool-header h1 { margin-top: 14px; }
+.analog-page .analog-tags { display: flex; flex-wrap: wrap; gap: 8px; }
+.analog-page .analog-tags .tool-tag { margin-top: 14px; }
+.analog-page .step-num { flex: none; }
+.analog-page .panel h2 { line-height: 1.5; }
+
+.analog-page .analog-config-grid {
+  display: grid;
+  grid-template-columns: minmax(0, 2fr) repeat(2, minmax(0, 1fr));
+  gap: 16px;
+  margin-top: 20px;
+}
+.analog-page .analog-control { min-width: 0; }
+.analog-page .analog-control > label {
+  display: block;
+  margin-bottom: 8px;
+  color: var(--muted);
+  font-size: 12px;
+  font-weight: 600;
+}
+.analog-page select, .analog-page input[type="number"] {
+  width: 100%;
+  min-width: 0;
+  max-width: 100%;
+  border: 1px solid var(--border-strong);
+  border-radius: 8px;
+  background: var(--bg-soft);
+  color: var(--text);
+  font: 14px var(--mono);
+  padding: 10px 12px;
+  min-height: 42px;
+}
+.analog-page select { font-family: var(--sans); }
+.analog-page select:hover, .analog-page input[type="number"]:hover { border-color: var(--muted); }
+.analog-page select:focus, .analog-page input[type="number"]:focus { border-color: var(--accent); }
+.analog-page :is(button, select, input, summary, .circuit-box, a):focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 3px;
+}
+.analog-page .analog-source-control { grid-column: 1 / -1; }
+.analog-page .analog-control > .analog-check {
+  display: inline-flex;
+  align-items: center;
+  gap: 9px;
+  margin: 0;
+  min-height: 28px;
+  color: var(--text);
+  font-size: 13px;
+  font-weight: 400;
+  cursor: pointer;
+}
+.analog-page .analog-check input {
+  width: 16px;
+  height: 16px;
+  flex: none;
+  margin: 0;
+  accent-color: var(--accent);
+}
+.analog-page .analog-description { margin-top: 14px; }
+
+.analog-page .analog-workspace {
+  display: grid;
+  grid-template-columns: minmax(270px, 0.85fr) minmax(0, 1.65fr);
+  grid-template-areas: "parameters schematic";
+  gap: 20px;
+  align-items: start;
+  margin: 22px 0;
+}
+.analog-page .analog-workspace > .panel { margin: 0; }
+.analog-page .analog-parameters-panel { grid-area: parameters; }
+.analog-page .analog-preview-panel { grid-area: schematic; }
+.analog-page .analog-section-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+.analog-page .analog-live-label { color: var(--accent); font: 11px var(--mono); }
+.analog-page .analog-circuit-title { color: var(--violet); font: 600 15px/1.6 var(--mono); margin: 16px 0 4px; }
+.analog-page .circuit-box {
+  width: 100%;
+  max-width: 100%;
+  min-width: 0;
+  max-height: 580px;
+  overflow: auto;
+  overscroll-behavior: contain;
+  scrollbar-color: var(--border-strong) var(--bg-soft);
+  scrollbar-width: thin;
+}
+.analog-page .circuit-box svg {
+  display: block;
+  width: var(--analog-svg-width);
+  min-width: 0;
+  max-width: 100%;
+  height: auto;
+  max-height: 578px;
+  margin: 0 auto;
+}
+.analog-page .circuit-box.analog-actual-size svg { max-width: none; max-height: none; }
+.analog-page .analog-placeholder { margin: 0; padding: 32px 18px; color: var(--muted); font-size: 13px; }
+.analog-page .analog-toolbar { display: flex; align-items: center; flex-wrap: wrap; gap: 10px; margin-top: 14px; }
+.analog-page .btn-add { min-height: 38px; max-width: 100%; white-space: normal; line-height: 1.5; }
+.analog-page .btn-add:disabled { opacity: 0.45; cursor: not-allowed; }
+.analog-page .analog-toolbar .hint { margin: 0; font-size: 11px; }
+.analog-page .analog-legend { border-top: 1px solid var(--border); margin-top: 16px; padding-top: 14px; }
+.analog-page .analog-legend summary { color: var(--muted); font: 12px var(--mono); cursor: pointer; }
+.analog-page .analog-legend dl { margin: 10px 0 0; }
+.analog-page .analog-legend dl > div { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 3fr); gap: 12px; padding: 6px 0; font-size: 12px; }
+.analog-page .analog-legend dt { color: var(--violet); font-family: var(--mono); }
+.analog-page .analog-legend dd { margin: 0; color: var(--muted); line-height: 1.5; }
+
+.analog-page .analog-notice {
+  padding: 12px;
+  border-left: 2px solid var(--violet);
+  border-radius: 0 6px 6px 0;
+  background: rgba(167, 139, 250, 0.06);
+  color: var(--muted);
+  font-size: 12px;
+  line-height: 1.65;
+  margin: 14px 0 10px;
+}
+.analog-page .analog-notice strong { display: block; color: var(--text); font-weight: 500; }
+.analog-page .analog-parameter-group { min-width: 0; margin: 20px 0; padding: 0; border: 0; }
+.analog-page .analog-parameter-group legend {
+  padding: 0 0 10px;
+  margin-bottom: 12px;
+  width: 100%;
+  border-bottom: 1px solid var(--border);
+  color: var(--violet);
+  font: 12px/1.5 var(--mono);
+}
+.analog-page .analog-field { min-width: 0; margin-bottom: 14px; }
+.analog-page .analog-field:last-child { margin-bottom: 0; }
+.analog-page .analog-field > label { display: flex; align-items: baseline; flex-wrap: wrap; gap: 6px; margin-bottom: 7px; font-size: 12px; line-height: 1.5; }
+.analog-page .analog-symbol { color: var(--accent); font: 13px var(--mono); }
+.analog-page .analog-input-row { display: grid; grid-template-columns: minmax(0, 1fr) minmax(40px, auto); align-items: center; gap: 10px; }
+.analog-page .analog-unit { color: var(--muted); font: 12px var(--mono); white-space: nowrap; }
+.analog-page .analog-field-hint { margin: 5px 0 0; font-size: 11px; color: var(--muted); line-height: 1.5; }
+.analog-page .analog-field.invalid input { border-color: var(--danger); background: var(--danger-soft); }
+.analog-page .analog-field.invalid .analog-field-hint { color: var(--danger); }
+
+.analog-page .analog-status {
+  border: 1px solid var(--border-strong);
+  border-radius: 8px;
+  padding: 11px 13px;
+  color: var(--muted);
+  background: var(--bg-soft);
+  font-size: 12px;
+  line-height: 1.6;
+  margin: 16px 0;
+}
+.analog-page .analog-status[data-state="valid"] { color: var(--accent); }
+.analog-page .analog-status[data-state="invalid"], .analog-page .analog-status[data-state="error"] {
+  border-color: rgba(248, 113, 113, 0.4);
+  color: var(--danger);
+  background: var(--danger-soft);
+}
+.analog-page .analog-metric-grid { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 12px; }
+.analog-page .analog-metric { min-width: 0; border: 1px solid var(--border-strong); border-radius: 10px; padding: 18px; background: var(--bg-soft); }
+.analog-page .analog-metric h3 { margin: 0 0 14px; font: 12px/1.5 var(--mono); color: var(--muted); }
+.analog-page .analog-metric-value { display: block; color: var(--accent); font: 600 clamp(18px, 2.1vw, 24px)/1.45 var(--mono); }
+.analog-page .analog-metric-value.analog-no-value { font-size: 14px; color: var(--muted); }
+.analog-page .analog-metric-secondary { display: block; color: var(--violet); font: 13px/1.7 var(--mono); margin-top: 5px; }
+.analog-page .analog-metric p { color: var(--muted); font-size: 11px; line-height: 1.6; margin: 12px 0 0; }
+.analog-page .analog-warnings { border-left: 2px solid var(--violet); background: rgba(167, 139, 250, 0.06); padding: 12px 14px 12px 30px; color: var(--text); font-size: 12px; line-height: 1.7; }
+.analog-page .analog-subheading { font: 14px var(--mono); margin: 26px 0 8px; }
+.analog-page .analog-formulas { margin: 16px 0 0; }
+.analog-page .analog-formulas > div { display: grid; grid-template-columns: minmax(0, 190px) minmax(0, 1fr); gap: 10px 20px; padding: 16px 0; border-bottom: 1px solid var(--border); }
+.analog-page .analog-formulas > div:last-child { border-bottom: 0; padding-bottom: 0; }
+.analog-page .analog-formulas dt { font-size: 12px; line-height: 1.7; color: var(--muted); }
+.analog-page .analog-formulas dd { min-width: 0; margin: 0; }
+.analog-page .analog-expression {
+  max-width: 100%;
+  overflow-x: auto;
+  padding: 10px 2px;
+  color: var(--text);
+  white-space: nowrap;
+  overflow-wrap: normal;
+  scrollbar-width: thin;
+  scrollbar-color: var(--border-strong) transparent;
+}
+.analog-page math { font-family: "Cambria Math", "STIX Two Math", math; font-size: 19px; }
+.analog-page .analog-expression > math { display: block; width: max-content; min-width: 0; margin: 0; text-align: left; }
+.analog-page .analog-symbol math { font-size: 17px; }
+.analog-page .analog-derived-value { display: block; margin-top: 6px; color: var(--accent); font: 12px/1.8 var(--mono); white-space: pre-wrap; overflow-wrap: anywhere; }
+.analog-page .analog-derived-value .analog-expression { color: inherit; }
+.analog-page .analog-derived-value math { font-size: 17px; }
+.analog-page .analog-formula-note { color: var(--muted); font-size: 11px; line-height: 1.65; margin: 6px 0 0; }
+.analog-page .analog-frequency-details { min-width: 0; border-top: 1px solid var(--border); padding-top: 18px; margin-top: 24px; }
+.analog-page .analog-frequency-details > summary { color: var(--violet); cursor: pointer; font-size: 13px; padding: 6px 0; }
+.analog-page .analog-expression:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+.analog-page .analog-assumptions, .analog-page .analog-limits ul { padding-left: 20px; margin: 14px 0 0; font-size: 12px; color: var(--muted); line-height: 1.8; }
+.analog-page .analog-assumptions li, .analog-page .analog-limits li { margin: 7px 0; }
+.analog-page .analog-limits { border-top: 1px solid var(--border); margin-top: 20px; padding-top: 16px; }
+.analog-page .analog-limits h3 { font: 13px var(--mono); margin: 0; }
+
+@media (max-width: 800px) {
+  .analog-page .analog-workspace { grid-template-columns: minmax(0, 1fr); grid-template-areas: "schematic" "parameters"; }
+  .analog-page #analog-parameters { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); column-gap: 22px; }
+  .analog-page .analog-config-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .analog-page .analog-topology-control { grid-column: 1 / -1; }
+}
+
+@media (max-width: 600px) {
+  .analog-page .wrap { padding: 0 16px; }
+  .analog-page .topbar-inner { padding: 0 16px; gap: 12px; }
+  .analog-page .brand { font-size: 15px; gap: 8px; letter-spacing: 0; }
+  .analog-page .topnav { gap: 12px; font-size: 12px; }
+  .analog-page .tool-header { padding-top: 28px; }
+  .analog-page .tool-header h1 { font-size: 24px; line-height: 1.4; }
+  .analog-page .tool-header p { font-size: 14px; }
+  .analog-page .panel { padding: 16px; }
+  .analog-page .analog-config-grid { gap: 14px 10px; }
+  .analog-page select { padding: 10px 8px; font-size: 13px; }
+  .analog-page #analog-parameters { grid-template-columns: minmax(0, 1fr); }
+  .analog-page .analog-metric-grid { grid-template-columns: minmax(0, 1fr); }
+  .analog-page .analog-metric-value { font-size: 23px; }
+  .analog-page .analog-formulas > div { grid-template-columns: minmax(0, 1fr); gap: 5px; }
+  .analog-page .analog-formulas dt { color: var(--violet); }
+  .analog-page .circuit-box { max-height: 470px; }
+  .analog-page .circuit-box:not(.analog-actual-size) svg { max-height: 468px; }
+}

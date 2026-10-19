@@ -1,0 +1,170 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Basic Analog Circuit Calculator — ICDesign Lab</title>
+  <meta name="description" content="Explore eight NMOS and PMOS amplifier topologies with live schematics, editable small-signal parameters, gain and bandwidth estimates, poles, zeros and model equations.">
+  <link rel="stylesheet" href="../assets/css/style.css">
+  <link rel="stylesheet" href="../assets/css/analog-calculator.css">
+  <link rel="icon" href="data:image/svg+xml,&lt;svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'&gt;&lt;rect x='2' y='2' width='12' height='12' rx='2' fill='%2322d3ee'/&gt;&lt;/svg&gt;">
+  <script src="../assets/js/analog-core.js" defer></script>
+  <script src="../assets/js/analog-schematic.js" defer></script>
+  <script src="../assets/js/analog-ui.js" defer></script>
+</head>
+<body class="analog-page">
+  <header class="topbar">
+    <div class="topbar-inner">
+      <a class="brand" href="../index.html"><span class="chip-dot"></span>ICDesign Lab</a>
+      <nav class="topnav" aria-label="Main navigation">
+        <a href="../index.html">Tools</a>
+        <a href="https://github.com/rodddddy/icdesign" target="_blank" rel="noopener">GitHub</a>
+      </nav>
+    </div>
+  </header>
+
+  <main class="wrap">
+    <div class="tool-header">
+      <a class="back-link" href="../index.html">&larr; All tools</a>
+      <h1>Basic Analog Circuit Calculator</h1>
+      <p>Explore MOS amplifier building blocks, from common-source stages to folded cascodes.
+         Change the circuit or its small-signal parameters to see the schematic, equations and estimates update immediately.</p>
+      <div class="analog-tags" aria-label="Calculator features">
+        <span class="tool-tag">8 topologies</span>
+        <span class="tool-tag">NMOS / PMOS</span>
+        <span class="tool-tag">Reduced small-signal models</span>
+      </div>
+    </div>
+
+    <noscript><p class="error-box">Enable JavaScript to display circuits and calculate small-signal results.</p></noscript>
+
+    <section class="panel" aria-labelledby="analog-config-heading">
+      <h2 id="analog-config-heading"><span class="step-num">1</span>Choose a circuit</h2>
+      <p class="hint">No Generate step. Topology changes reset parameters; polarity and option changes keep matching values.</p>
+      <div class="analog-config-grid">
+        <div class="analog-control analog-topology-control">
+          <label for="analog-type">Topology</label>
+          <select id="analog-type" aria-describedby="analog-description">
+            <option value="cs">Common-source amplifier</option>
+            <option value="cg">Common-gate amplifier</option>
+            <option value="cascode">Cascode amplifier</option>
+            <option value="follower">Source follower</option>
+            <option value="diff-five">Five-transistor differential amplifier</option>
+            <option value="diff-cg">Differential common-gate amplifier</option>
+            <option value="diff-cascode">Differential cascode amplifier</option>
+            <option value="folded-cascode">Folded-cascode amplifier</option>
+          </select>
+        </div>
+        <div class="analog-control">
+          <label for="analog-polarity">Input device polarity</label>
+          <select id="analog-polarity">
+            <option value="nmos">NMOS</option>
+            <option value="pmos">PMOS</option>
+          </select>
+        </div>
+        <div class="analog-control" id="analog-load-control">
+          <label for="analog-load">Load</label>
+          <select id="analog-load">
+            <option value="resistor">Resistor load</option>
+            <option value="active">Active MOS load</option>
+          </select>
+        </div>
+        <div class="analog-control analog-source-control" id="analog-source-control">
+          <label class="analog-check" for="analog-source-resistance">
+            <input type="checkbox" id="analog-source-resistance">
+            <span>Include source resistance</span>
+          </label>
+        </div>
+      </div>
+      <p class="hint analog-description" id="analog-description"></p>
+    </section>
+
+    <div class="analog-workspace">
+      <section class="panel analog-preview-panel" aria-labelledby="analog-schematic-heading">
+        <div class="analog-section-head">
+          <h2 id="analog-schematic-heading">Circuit schematic</h2>
+          <span class="analog-live-label">Updates with configuration</span>
+        </div>
+        <h3 class="analog-circuit-title" id="analog-circuit-title">Small-signal amplifier</h3>
+        <p class="hint" id="analog-schematic-help">The full circuit fits the panel. Choose Actual size for readable labels, then scroll or swipe to pan. Bias ports are idealized.</p>
+        <div class="circuit-box" id="analog-schematic" role="region" aria-label="Circuit schematic" aria-describedby="analog-schematic-help" tabindex="0">
+          <p class="analog-placeholder">Loading schematic…</p>
+        </div>
+        <div class="analog-toolbar">
+          <button class="btn-add" id="analog-schematic-size" type="button" aria-controls="analog-schematic" aria-pressed="false" disabled>Actual size</button>
+          <button class="btn-add" id="analog-download-svg" type="button" disabled>Download schematic SVG</button>
+          <span class="hint">White-background, scalable SVG</span>
+        </div>
+        <p class="hint" id="analog-download-status" role="status" aria-live="polite"></p>
+        <details class="analog-legend" id="analog-legend" hidden>
+          <summary>Device legend</summary>
+          <dl id="analog-devices"></dl>
+        </details>
+      </section>
+
+      <section class="panel analog-parameters-panel" aria-labelledby="analog-parameters-heading">
+        <h2 id="analog-parameters-heading"><span class="step-num">2</span>Small-signal parameters</h2>
+        <p class="analog-notice" id="analog-default-notice"><strong>Illustrative values, not a bias solution.</strong>
+          Defaults are prefilled for exploration. Replace them with values from your intended operating point.</p>
+        <p class="hint" id="analog-input-help">All fields are required. Units are shown beside each input; scientific notation such as 1e-3 is accepted.</p>
+        <div id="analog-parameters" aria-describedby="analog-default-notice analog-input-help"></div>
+        <button class="btn-add" id="analog-reset" type="button" disabled>Reset parameters</button>
+        <p class="hint">Restores illustrative values for the current circuit.</p>
+      </section>
+    </div>
+
+    <section class="panel" id="analog-results" aria-labelledby="analog-results-heading">
+      <h2 id="analog-results-heading"><span class="step-num">3</span>Small-signal results</h2>
+      <p class="hint">Analytical approximations, not transistor-level SPICE accuracy. Frequencies below are in Hz unless labeled otherwise.</p>
+      <p class="analog-status" id="analog-status" role="status" aria-live="polite" aria-atomic="true">Loading the reduced model…</p>
+      <div class="analog-metric-grid">
+        <article class="analog-metric">
+          <h3>DC gain</h3>
+          <output class="analog-metric-value" data-metric="gain">—</output>
+          <output class="analog-metric-secondary" data-metric="gainDb">—</output>
+          <p>Signed V/V; dB uses gain magnitude.</p>
+        </article>
+        <article class="analog-metric">
+          <h3>−3 dB bandwidth</h3>
+          <output class="analog-metric-value" data-metric="bandwidth">—</output>
+          <p>Relative to the reduced model’s DC magnitude.</p>
+        </article>
+        <article class="analog-metric">
+          <h3>Unity-gain frequency</h3>
+          <output class="analog-metric-value" data-metric="unity">—</output>
+          <p>Actual |H(j2πf)| = 1 crossing of this reduced model; not the GBW estimate.</p>
+        </article>
+      </div>
+      <ul class="analog-warnings" id="analog-warnings" aria-label="Model warnings" hidden></ul>
+      <h3 class="analog-subheading">Key equations</h3>
+      <p class="hint">Device-parameter expressions for this reduced model. ∥ means parallel resistance; long equations can be scrolled horizontally.</p>
+      <dl class="analog-formulas" id="analog-formulas"></dl>
+      <details class="analog-frequency-details" id="analog-frequency-details">
+        <summary>Frequency-response details</summary>
+        <p class="hint">Transfer function, pole calculation and numerical coefficients. Equations remain visible when parameter inputs are incomplete.</p>
+        <dl class="analog-formulas" id="analog-frequency-formulas"></dl>
+      </details>
+    </section>
+
+    <section class="panel" aria-labelledby="analog-assumptions-heading">
+      <h2 id="analog-assumptions-heading">Assumptions &amp; model limits</h2>
+      <ul class="analog-assumptions" id="analog-assumptions"></ul>
+      <div class="analog-limits">
+        <h3>Before using these estimates</h3>
+        <ul>
+          <li>These are reduced, linear small-signal approximations around an assumed operating point. Only the poles, zeros and parasitics explicitly represented by the equations are included.</li>
+          <li>All MOS devices are assumed to operate in saturation. Supply voltage, bias currents, headroom, output swing and saturation are not solved or verified here.</li>
+          <li>Body effect is neglected in all eight models. Verify body connections and device operating points separately.</li>
+          <li>Bias voltages and current sources are idealized except for explicitly modeled small-signal resistance. Bias generation, mismatch, noise and large-signal behavior are outside scope.</li>
+          <li>Differential models use the signal and output convention stated in their equations. Common-mode feedback (CMFB), common-mode operating point and CMFB-loop stability are not designed or checked.</li>
+          <li>Use operating-point analysis and transistor-level simulation to validate a real design. This calculator does not claim transistor-level SPICE accuracy.</li>
+        </ul>
+      </div>
+    </section>
+  </main>
+
+  <footer class="site-footer">
+    <div class="wrap">ICDesign Lab — static site deployed on Cloudflare Pages · source on GitHub</div>
+  </footer>
+</body>
+</html>
