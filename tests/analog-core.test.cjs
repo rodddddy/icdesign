@@ -324,6 +324,7 @@ test('displayed physical equations equal the solver across every option and para
       assert.doesNotMatch(mainText, /"(?:den|g|go|gL|N0|N1|D0|D1|D2|a1|a2)"/);
       assert.equal(description.formulas.find(f => f.key === 'transfer').detail, true);
       assert.ok(description.formulas.filter(f => !f.detail && f.key === null).length <= 3);
+      assert.doesNotMatch(JSON.stringify(equations.get('GBW')), /"(?:Av|Rout|abs)"/, type + ': GBW is multiplied out, not |Av|/(2π Rout C)');
       for (let trial = 0; trial < 6; trial++) {
         const values = trial === 0 ? defaults(config) : varied(config);
         if (trial >= 2) Object.keys(values).forEach(key => { values[key] *= 10 ** (4 * random() - 2); });
@@ -379,7 +380,7 @@ for (const type of ids) {
           close(result.metrics.gain, reference(config, values, 0).re, 2e-9, type + ' DC gain');
           close(result.metrics.rout, reference(config, values, 0, true).re, 2e-9, type + ' output test current');
           close(result.metrics.gainDb, 20 * Math.log10(Math.abs(result.metrics.gain)));
-          close(result.metrics.gbw, Math.abs(result.metrics.gain) / (TAU * result.metrics.rout * values.CL));
+          close(result.metrics.gbw, Math.abs(result.metrics.gain) / (TAU * result.denominator[1]));
           for (const omega of [0, 13, 2e4, 6e6, 9e8, 4e10]) complexClose(transfer(result, omega), reference(config, values, omega), type + ' at ' + omega + ' rad/s');
           assertCrossing(result, 'bandwidth');
           assertCrossing(result, 'unity');

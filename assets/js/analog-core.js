@@ -102,7 +102,7 @@
       'Ideal small-signal input voltage drive; all devices are assumed biased in saturation. Transconductances are positive magnitudes, body effect is neglected, and supply and bias voltages are AC-grounded.',
       'CL includes only the specified lumped output-to-AC-ground loading; CX, when present, includes only the specified internal-node-to-AC-ground loading. Neither includes the other node or explicit feedforward capacitances. Individual transistor Cgs, Cgd and Cdb are not inferred or separately modeled, except the explicit CS CF and follower CGS.',
       'Changing NMOS to PMOS complements device polarities without changing gain signs for the same small-signal magnitudes and voltage conventions.',
-      'GBW is the dominant-output-pole estimate |gain| / (2π Rout CL), not generally the actual model unity crossing. Returned pole and zero coordinates are in s-plane rad/s, not Hz.'
+      'GBW is |gain| times the dominant pole frequency fp1 = 1/(2π a1), not generally the actual model unity crossing. Returned pole and zero coordinates are in s-plane rad/s, not Hz.'
     ];
     if (differential) {
       assumptions.push('Matched differential pairs and equal per-branch values are assumed. vi = vi+ − vi− with the left input positive; common mode is fixed, the tail is ideal in AC, and there is no CMFB or stability prediction.');
@@ -202,7 +202,11 @@
     formula('gain', 'DC voltage gain', ['eq', 'Av', gain], 'V/V', type === 'diff-five' ? 'Positive differential-to-single-ended gain at the right output; finite mirror resistance is retained.' : 'Signed gain, including finite transistor output resistances.');
     formula('rout', 'Output resistance', ['eq', 'Rout', rout], 'Ω', 'Input voltage set to zero; the load is included. ∥ denotes parallel resistance.');
     formulas.push(...definitions);
-    formula('gbw', 'Gain–bandwidth estimate', ['eq', 'GBW', frac(abs('Av'), mul(2, 'π', 'Rout', 'CL'))], 'Hz', 'Dominant-output-pole estimate only; not the actual unity-gain crossing.');
+    // |Av| · fp1 multiplied out per topology, so Rout cancels.
+    const gbwMath = cg
+      ? (sourceResistance ? frac(mul(sum(1, mul('gm1', 'ro1')), loadR), twoPi(time1[1])) : frac(sum(1, mul('gm1', 'ro1')), twoPi('ro1', 'CL')))
+      : frac(unityGm[0], twoPi(...(unityGm[1] ? [unityGm[1]] : []), outputCap));
+    formula('gbw', 'Gain–bandwidth product', ['eq', 'GBW', gbwMath], 'Hz', 'GBW = |Av| · fp1 with the dominant pole fp1, simplified for this circuit; it estimates fu when |Av| ≫ 1 and the other poles and zeros lie above it.');
     const fp1 = time1[0] === 'div' ? frac(time1[2], twoPi(time1[1])) : frac(1, twoPi(time1));
     formula('poles', 'Poles', time2 === null
       ? ['eq', 'fp1', fp1]
@@ -223,9 +227,7 @@
     } else if (singlePole) {
       formula('unity', 'Unity-gain frequency', ['eq', 'fu', frac(['sqrt', sum(['pow', 'Av', 2], neg(1))], twoPi('Rout', 'CL'))], 'Hz', 'Exact for this single-pole model; a crossing exists only when |Av| > 1.');
     } else {
-      const unity = cg ? frac(mul(abs('Av'), time1[2]), twoPi(time1[1]))
-        : frac(unityGm[0], twoPi(...(unityGm[1] ? [unityGm[1]] : []), outputCap));
-      formula('unity', 'Unity-gain frequency', ['approx', 'fu', unity], 'Hz', 'Single-pole estimate |Av| · f−3dB, valid when |Av| ≫ 1 and the remaining poles and zeros lie above fu.' + exactNote);
+      formula('unity', 'Unity-gain frequency', ['approx', 'fu', gbwMath], 'Hz', 'Single-pole estimate |Av| · f−3dB, valid when |Av| ≫ 1 and the remaining poles and zeros lie above fu.' + exactNote);
     }
     const numerator = type === 'cs' ? sum('Av', mul('s', 'Rout', 'CF'))
       : type === 'follower' ? sum('Av', mul('s', 'Rout', 'CGS'))
@@ -423,7 +425,7 @@
     const magnitude = range(Math.abs(gain), 'DC gain magnitude', true);
     const gainDb = range(20 * Math.log10(magnitude), 'DC gain in decibels');
     const rout = range(routNumerator / d0, 'output resistance', true);
-    const gbw = range(Math.exp(Math.log(magnitude) - Math.log(TWO_PI) - Math.log(rout) - Math.log(v.CL)), 'dominant-output-pole GBW estimate', true);
+    const gbw = range(Math.exp(Math.log(magnitude) - Math.log(TWO_PI) - Math.log(denominator[1])), 'gain-bandwidth product', true);
     const poles = characteristicRoots(denominator[1], denominator[2]);
     const zeros = numerator[1] === 0 ? [] : [{ re: range(-numerator[0] / numerator[1], 'finite zero frequency'), im: 0 }];
     const bandwidth = crossing(numerator, denominator, 1, Math.SQRT1_2);
