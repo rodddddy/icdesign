@@ -124,6 +124,7 @@
     const neg = a => ['neg', a];
     const parallel = (...args) => ['parallel', ...args];
     const abs = a => ['abs', a];
+    const twoPi = (...args) => mul(2, 'π', ...args.flatMap(arg => Array.isArray(arg) && arg[0] === 'mul' ? arg.slice(1) : [arg]));
     const formulas = [];
     const definitions = [];
     const formula = (key, label, math, unit = '', note = '', detail = false) => formulas.push({ key, label, math, unit, note, detail });
@@ -140,7 +141,9 @@
     let zeroCap = '';
     let time1;
     let time2 = null;
+    let secondPole = null;
     let outputCap = 'CL';
+    let unityGm = sourceResistance ? [mul('gm1', 'ro1'), rd] : ['gm1', null];
     if (type === 'cs' || cg) {
       rout = parallel(degenerated, loadR);
       gain = sourceResistance
@@ -153,6 +156,7 @@
       } else if (sourceResistance) {
         time1 = frac(sum(mul(degenerated, loadR, 'CL'), mul(sum('ro1', loadR), 'RS', 'CX')), sum(degenerated, loadR));
         time2 = frac(mul('ro1', loadR, 'RS', 'CX', 'CL'), sum(degenerated, loadR));
+        secondPole = frac(time1[1], twoPi('ro1', loadR, 'RS', 'CX', 'CL'));
       }
     } else if (type === 'follower') {
       rout = parallel(frac(1, 'gm1'), 'ro1', 'RL');
@@ -165,8 +169,11 @@
       gain = mul(gm, parallel(rd, 'ro3'), frac(sum(1, mul(2, 'gm3', 'ro3')), mul(2, mirrorGain)));
       rout = mul(parallel(rd, 'ro3'), sum(1, frac('ro3', mul(2, rd, mirrorGain))));
       const mirrorNode = sum('ro3', mul(2, rd, mirrorGain));
-      time1 = mul('Rout', sum('CL', mul(frac(sum('ro3', mul(2, rd)), mirrorNode), 'CX')));
+      outputCap = sum('CL', mul(frac(sum('ro3', mul(2, rd)), mirrorNode), 'CX'));
+      time1 = mul('Rout', outputCap);
+      unityGm = [mul('gm1', 'ro1', sum(1, mul(2, 'gm3', 'ro3'))), mirrorNode];
       time2 = frac(mul(2, 'Rout', rd, 'ro3', 'CX', 'CL'), mirrorNode);
+      secondPole = frac(mul(mirrorNode, outputCap), mul(4, 'π', rd, 'ro3', 'CX', 'CL'));
       zero = neg(frac(sum(mul(2, 'gm3'), frac(1, 'ro3')), 'CX'));
       zeroCap = 'CX';
     } else {
@@ -183,23 +190,43 @@
       }
       rout = parallel('Rsig', loadR);
       gain = neg(mul(gm, frac(mul(boost, rx), 'Rsig'), 'Rout'));
-      time1 = mul('Rout', sum('CL', mul(frac(mul(sum(rc, loadR), rx), mul(loadR, 'Rsig')), 'CX')));
+      outputCap = sum('CL', mul(frac(mul(sum(rc, loadR), rx), mul(loadR, 'Rsig')), 'CX'));
+      time1 = mul('Rout', outputCap);
+      unityGm = sourceResistance && type !== 'folded-cascode'
+        ? [mul('gm1', 'ro1', boost), 'Rsig']
+        : [mul(unityGm[0], boost, rx), unityGm[1] ? mul(unityGm[1], 'Rsig') : 'Rsig'];
       time2 = frac(mul('Rout', rc, rx, 'CX', 'CL'), 'Rsig');
+      secondPole = frac(mul('Rsig', outputCap), twoPi(rc, rx, 'CX', 'CL'));
     }
     if (time1 === undefined) time1 = mul('Rout', outputCap);
     formula('gain', 'DC voltage gain', ['eq', 'Av', gain], 'V/V', type === 'diff-five' ? 'Positive differential-to-single-ended gain at the right output; finite mirror resistance is retained.' : 'Signed gain, including finite transistor output resistances.');
     formula('rout', 'Output resistance', ['eq', 'Rout', rout], 'Ω', 'Input voltage set to zero; the load is included. ∥ denotes parallel resistance.');
     formulas.push(...definitions);
     formula('gbw', 'Gain–bandwidth estimate', ['eq', 'GBW', frac(abs('Av'), mul(2, 'π', 'Rout', 'CL'))], 'Hz', 'Dominant-output-pole estimate only; not the actual unity-gain crossing.');
+    const fp1 = time1[0] === 'div' ? frac(time1[2], twoPi(time1[1])) : frac(1, twoPi(time1));
     formula('poles', 'Poles', time2 === null
-      ? ['eq', 'p1', neg(frac(1, time1))]
-      : ['eq', ['call', 'D', 'p'], 0], 'rad/s', time2 === null
-      ? 'Signed s-plane pole; divide its magnitude by 2π for Hz.'
-      : 'Roots of the transfer-function denominator D(s), defined in the details below. Complex pairs are retained; no pole-zero cancellation.');
-    formula('zeros', 'Zeros', zero ? ['eq', 'z1', zero] : ['text', 'No finite zero'], 'rad/s', zero
-      ? 'For ' + zeroCap + ' > 0; no finite zero when it is zero. ' + (type === 'cs' ? 'Right-half-plane zero.' : 'Left-half-plane zero.') : 'No feedforward zero in this reduced model.');
-    formula('bandwidth', '−3 dB bandwidth', ['eq', abs(['call', 'H', mul('j', 2, 'π', 'f3dB')]), frac(abs('Av'), ['sqrt', 2])], 'Hz', 'First descending crossing relative to the DC gain magnitude.');
-    formula('unity', 'Unity-gain frequency', ['eq', abs(['call', 'H', mul('j', 2, 'π', 'fu')]), 1], 'Hz', 'First descending unity crossing. A source follower normally has none.');
+      ? ['eq', 'fp1', fp1]
+      : ['rows', ['approx', 'fp1', fp1], ['approx', 'fp2', secondPole]], 'Hz', time2 === null
+      ? 'Exact single pole at s = −2π fp1.'
+      : 'Widely spaced pole estimates (fp1 ≪ fp2) from the denominator D(s) in the details below; fp2 applies for CX > 0. Values shown are the exact roots; complex pairs are reported as |s|/2π.');
+    const zeroMagnitude = zero && (zero[0] === 'neg' ? zero[1] : zero);
+    formula('zeros', 'Zeros', zero ? ['eq', 'fz', frac(zeroMagnitude[1], twoPi(zeroMagnitude[2]))] : ['text', 'No finite zero'], 'Hz', zero
+      ? (type === 'cs' ? 'Right-half-plane zero at s = +2π fz' : 'Left-half-plane zero at s = −2π fz') + '; none when ' + zeroCap + ' = 0.' : 'No feedforward zero in this reduced model.');
+    const singlePole = time2 === null && zero === null;
+    const exactNote = ' The value shown is the exact crossing of the reduced model.';
+    const bandwidthNote = singlePole ? 'Exact for this single-pole model.'
+      : time2 === null ? 'Output-pole frequency; the ' + (type === 'cs' ? 'right' : 'left') + '-half-plane zero is neglected.' + exactNote
+      : 'Dominant-pole estimate, valid when the non-dominant pole and the zero lie well above it.' + exactNote;
+    formula('bandwidth', '−3 dB bandwidth', [singlePole ? 'eq' : 'approx', 'f3dB', fp1], 'Hz', bandwidthNote);
+    if (type === 'follower') {
+      formula('unity', 'Unity-gain frequency', ['text', 'No unity-gain crossing'], 'Hz', 'Both the DC gain and the high-frequency gain CGS/(CL + CGS) are below 1, so |H| never reaches 1.');
+    } else if (singlePole) {
+      formula('unity', 'Unity-gain frequency', ['eq', 'fu', frac(['sqrt', sum(['pow', 'Av', 2], neg(1))], twoPi('Rout', 'CL'))], 'Hz', 'Exact for this single-pole model; a crossing exists only when |Av| > 1.');
+    } else {
+      const unity = cg ? frac(mul(abs('Av'), time1[2]), twoPi(time1[1]))
+        : frac(unityGm[0], twoPi(...(unityGm[1] ? [unityGm[1]] : []), outputCap));
+      formula('unity', 'Unity-gain frequency', ['approx', 'fu', unity], 'Hz', 'Single-pole estimate |Av| · f−3dB, valid when |Av| ≫ 1 and the remaining poles and zeros lie above fu.' + exactNote);
+    }
     const numerator = type === 'cs' ? sum('Av', mul('s', 'Rout', 'CF'))
       : type === 'follower' ? sum('Av', mul('s', 'Rout', 'CGS'))
       : type === 'diff-five' ? mul('Av', sum(1, frac(mul('s', 'CX'), sum(mul(2, 'gm3'), frac(1, 'ro3'))))) : 'Av';

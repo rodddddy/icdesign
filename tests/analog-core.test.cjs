@@ -303,6 +303,10 @@ function evaluateEquation(tree, values, equations, frequency = z(0)) {
     return mul(evaluated[0], evaluated[0]);
   }
   if (op === 'abs') return z(abs(evaluated[0]));
+  if (op === 'sqrt') {
+    assert.ok(evaluated[0].im === 0 && evaluated[0].re >= 0);
+    return z(Math.sqrt(evaluated[0].re));
+  }
   throw new Error('Unsupported equation operation: ' + op);
 }
 
@@ -333,9 +337,31 @@ test('displayed physical equations equal the solver across every option and para
         if (equations.has('a1')) {
           close(evaluate('a1').re, result.denominator[1], 1e-10, type + ' displayed a1');
           close(evaluate('a2').re, result.denominator[2], 1e-10, type + ' displayed a2');
-        } else close(evaluate('p1').re, result.poles[0].re, 1e-10, type + ' displayed pole');
-        if (result.zeros.length) close(evaluate('z1').re, result.zeros[0].re, 1e-10, type + ' displayed zero');
+        } else close(evaluate('fp1').re, -result.poles[0].re / TAU, 1e-10, type + ' displayed exact pole');
+        if (result.zeros.length) close(evaluate('fz').re, Math.abs(result.zeros[0].re) / TAU, 1e-10, type + ' displayed zero');
         for (const omega of [0, 3e4, 8e7, 2e10]) complexClose(evaluate('H', omega), transfer(result, omega), type + ' displayed transfer function');
+        const frequency = key => description.formulas.find(f => f.key === key).math;
+        const frequencyValue = key => evaluateEquation(frequency(key)[2], values, equations).re;
+        const dominant = 1 / (TAU * result.denominator[1]);
+        const poleRows = frequency('poles')[0] === 'rows' ? frequency('poles').slice(1) : [frequency('poles')];
+        assert.equal(poleRows.length, equations.has('a1') ? 2 : 1);
+        close(evaluateEquation(poleRows[0][2], values, equations).re, dominant, 1e-10, type + ' displayed first pole');
+        if (poleRows.length === 2) {
+          poleRows.forEach(row => assert.equal(row[0], 'approx'));
+          if (result.denominator[2] > 0) close(evaluateEquation(poleRows[1][2], values, equations).re, result.denominator[1] / (TAU * result.denominator[2]), 1e-10, type + ' displayed second pole');
+        }
+        close(frequencyValue('bandwidth'), dominant, 1e-10, type + ' displayed bandwidth expression');
+        if (frequency('bandwidth')[0] === 'eq') close(result.metrics.bandwidth, dominant, 1e-10, type + ' exact single-pole bandwidth');
+        else assert.equal(frequency('bandwidth')[0], 'approx');
+        if (type === 'follower') {
+          assert.equal(frequency('unity')[0], 'text');
+          assert.equal(result.metrics.unity, null);
+        } else if (frequency('unity')[0] === 'eq') {
+          if (result.metrics.unity !== null) close(frequencyValue('unity'), result.metrics.unity, 1e-10, type + ' exact single-pole unity');
+        } else {
+          assert.equal(frequency('unity')[0], 'approx');
+          close(frequencyValue('unity'), Math.abs(result.metrics.gain) * dominant, 1e-10, type + ' displayed unity estimate');
+        }
       }
     }
   }

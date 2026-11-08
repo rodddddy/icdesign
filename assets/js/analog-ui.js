@@ -13,7 +13,6 @@
     title: byId('analog-circuit-title'),
     parameters: byId('analog-parameters'),
     schematic: byId('analog-schematic'),
-    schematicSize: byId('analog-schematic-size'),
     formulas: byId('analog-formulas'),
     frequencyFormulas: byId('analog-frequency-formulas'),
     assumptions: byId('analog-assumptions'),
@@ -22,6 +21,7 @@
     warnings: byId('analog-warnings'),
     reset: byId('analog-reset'),
     download: byId('analog-download-svg'),
+    downloadPng: byId('analog-download-png'),
     downloadStatus: byId('analog-download-status'),
     legend: byId('analog-legend'),
     devices: byId('analog-devices')
@@ -104,15 +104,16 @@
   function rootValues(roots, kind) {
     if (!Array.isArray(roots)) return 'Unavailable in this model';
     if (roots.length === 0) return kind === 'zeros' ? 'No finite zero in this model' : 'No finite pole in this model';
-    const prefix = kind === 'zeros' ? 'z' : 'p';
+    const prefix = kind === 'zeros' ? 'fz' : 'fp';
     return roots.map((root, index) => {
-      if (!root || !finite(root.re) || !finite(root.im)) return `${prefix}${index + 1}: unavailable`;
+      const name = kind === 'zeros' && roots.length === 1 ? prefix : `${prefix}${index + 1}`;
+      if (!root || !finite(root.re) || !finite(root.im)) return `${name}: unavailable`;
       let location = engineering(root.re, 'rad/s');
       if (root.im !== 0) {
         location += ` ${root.im < 0 ? '−' : '+'} j${engineering(Math.abs(root.im), 'rad/s')}`;
       }
       const frequency = Math.hypot(root.re / (2 * Math.PI), root.im / (2 * Math.PI));
-      return `${prefix}${index + 1} = ${location}  (|s|/2π = ${engineering(frequency, 'Hz')})`;
+      return `${name} = ${engineering(frequency, 'Hz')}  (s = ${location})`;
     }).join('\n');
   }
 
@@ -166,6 +167,11 @@
   }
 
   function mathDisplay(tree) {
+    if (Array.isArray(tree) && tree[0] === 'rows') {
+      const rows = document.createDocumentFragment();
+      tree.slice(1).forEach(row => rows.append(mathDisplay(row)));
+      return rows;
+    }
     const wrapper = element('div', 'analog-expression');
     wrapper.tabIndex = 0;
     wrapper.setAttribute('aria-label', 'Equation; scroll horizontally if needed');
@@ -340,7 +346,7 @@
   function updateSchematic() {
     schematicAvailable = false;
     ui.download.disabled = true;
-    ui.schematicSize.disabled = true;
+    ui.downloadPng.disabled = true;
     ui.downloadStatus.textContent = '';
     ui.legend.hidden = true;
     ui.devices.replaceChildren();
@@ -366,7 +372,7 @@
       ui.legend.hidden = devices.length === 0;
       schematicAvailable = true;
       ui.download.disabled = false;
-      ui.schematicSize.disabled = false;
+      ui.downloadPng.disabled = false;
     } catch (error) {
       ui.schematic.replaceChildren(element('p', 'analog-placeholder', 'The schematic could not be loaded. Equations and parameter calculations are available independently.'));
       console.error('Analog schematic failed:', error);
@@ -419,39 +425,66 @@
       ui.description.textContent = '';
       ui.reset.disabled = true;
       ui.download.disabled = true;
-      ui.schematicSize.disabled = true;
+      ui.downloadPng.disabled = true;
       clearNumericResults();
       status('The circuit model could not be loaded. Choose another topology or reload the page.', 'error');
       console.error('Analog configuration failed:', error);
     }
   }
 
-  function downloadSchematic() {
+  function saveBlob(blob, filename) {
+    const url = URL.createObjectURL(blob);
+    const link = element('a');
+    link.download = filename;
+    link.href = url;
+    link.hidden = true;
+    document.body.append(link);
+    link.click();
+    link.remove();
+    // Allow the browser to consume the Blob before releasing its URL.
+    window.setTimeout(() => URL.revokeObjectURL(url), 1000);
+  }
+
+  async function svgToPng(rendered) {
+    const url = URL.createObjectURL(new Blob([rendered.svg], { type: 'image/svg+xml;charset=utf-8' }));
+    try {
+      const image = new Image();
+      await new Promise((resolve, reject) => {
+        image.onload = resolve;
+        image.onerror = () => reject(new Error('The schematic image could not be rendered.'));
+        image.src = url;
+      });
+      const canvas = element('canvas');
+      canvas.width = Math.ceil(rendered.width * 2);
+      canvas.height = Math.ceil(rendered.height * 2);
+      const context = canvas.getContext('2d');
+      if (!context) throw new Error('A canvas is not available in this browser.');
+      context.fillStyle = '#ffffff';
+      context.fillRect(0, 0, canvas.width, canvas.height);
+      context.drawImage(image, 0, 0, canvas.width, canvas.height);
+      const blob = await new Promise(resolve => canvas.toBlob(resolve, 'image/png'));
+      if (!blob) throw new Error('The PNG could not be encoded.');
+      return blob;
+    } finally {
+      URL.revokeObjectURL(url);
+    }
+  }
+
+  async function downloadSchematic(format) {
     if (!model || !schematicAvailable) return;
-    let url = null;
-    let link = null;
+    const label = format.toUpperCase();
     try {
       // The white-theme export is independently rendered; no user input is concatenated into SVG.
       const rendered = window.ICAnalogSchematic.render(model.config, true);
       if (!rendered || typeof rendered.svg !== 'string' || !rendered.svg.trim()) throw new Error('No SVG to download.');
-      const blob = new Blob([rendered.svg], { type: 'image/svg+xml;charset=utf-8' });
-      url = URL.createObjectURL(blob);
       const config = model.config;
-      const name = ['analog', config.type, config.polarity, config.load, config.sourceResistance ? 'source-r' : ''].filter(Boolean).join('-');
-      link = element('a');
-      link.download = `${name.replace(/[^a-z0-9-]/gi, '-')}.svg`;
-      link.href = url;
-      link.hidden = true;
-      document.body.append(link);
-      link.click();
-      ui.downloadStatus.textContent = 'SVG download requested. The export uses a white background.';
+      const name = ['analog', config.type, config.polarity, config.load, config.sourceResistance ? 'source-r' : ''].filter(Boolean).join('-').replace(/[^a-z0-9-]/gi, '-');
+      const blob = format === 'png' ? await svgToPng(rendered) : new Blob([rendered.svg], { type: 'image/svg+xml;charset=utf-8' });
+      saveBlob(blob, `${name}.${format}`);
+      ui.downloadStatus.textContent = `${label} download requested. The export uses a white background.`;
     } catch (error) {
-      ui.downloadStatus.textContent = 'SVG download could not be prepared. Please try again.';
-      console.error('Analog SVG download failed:', error);
-    } finally {
-      if (link) link.remove();
-      // Allow the browser to consume the Blob before releasing its URL.
-      if (url) window.setTimeout(() => URL.revokeObjectURL(url), 1000);
+      ui.downloadStatus.textContent = `${label} download could not be prepared. Please try again${format === 'png' ? ' or download SVG' : ''}.`;
+      console.error(`Analog ${label} download failed:`, error);
     }
   }
 
@@ -485,13 +518,7 @@
     fields.forEach(({ input, parameter }) => { input.value = inputString(parameter.default / parameter.scale); });
     calculate();
   });
-  ui.download.addEventListener('click', downloadSchematic);
-  ui.schematicSize.addEventListener('click', () => {
-    const actualSize = ui.schematic.classList.toggle('analog-actual-size');
-    ui.schematicSize.textContent = actualSize ? 'Fit diagram' : 'Actual size';
-    ui.schematicSize.setAttribute('aria-pressed', String(actualSize));
-    ui.schematic.scrollLeft = 0;
-    ui.schematic.scrollTop = 0;
-  });
+  ui.download.addEventListener('click', () => downloadSchematic('svg'));
+  ui.downloadPng.addEventListener('click', () => downloadSchematic('png'));
   updateConfiguration(true);
 })();

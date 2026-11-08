@@ -228,12 +228,12 @@ test('ideal bias arrows carry conventional current downward for both polarities'
       const sources = [...svg.matchAll(/<g data-device="IB\d*" data-kind="current-source">([\s\S]*?)<\/g>/g)];
       assert.equal(sources.length, type === 'diff-cg' ? 2 : 1);
       for (const [, source] of sources) {
-        const circle = source.match(/<circle cx="([\d.]+)" cy="([\d.]+)" r="20"/);
+        const circle = source.match(/<circle cx="([\d.]+)" cy="([\d.]+)" r="9"/);
         assert.ok(circle);
         const x = Number(circle[1]);
         const y = Number(circle[2]);
-        assert.ok(source.includes(`points="${x},${y - 10} ${x},${y + 10}"`));
-        assert.ok(source.includes(`points="${x - 5},${y + 4} ${x},${y + 10} ${x + 5},${y + 4}"`));
+        assert.ok(source.includes(`points="${x},${y - 5} ${x},${y + 5}"`));
+        assert.ok(source.includes(`points="${x - 3},${y + 2} ${x},${y + 5} ${x + 3},${y + 2}"`));
       }
     }
   }
@@ -395,10 +395,13 @@ test('all drawn polyline, polygon, and circle bounds fit the canvas across the f
   });
 });
 
-test('different electrical nets have no external conductor intersections or overlaps across the full matrix', () => {
+test('different electrical nets touch only at intended textbook crossovers across the full matrix', () => {
+  // The folded cascode routes the Y track and the vin− return across other nets, as in the textbook figure.
+  const intended = { 'folded-cascode': new Set(['x1|x2', 'vin-|x1', 'vin-|x2']) };
   checkGeometryMatrix((result, config) => {
     const conductors = externalConductors(result, config);
     const contacts = new Set();
+    let crossovers = 0;
     for (let i = 0; i < conductors.length; i++) {
       const a = conductors[i];
       for (const b of conductors.slice(i + 1)) {
@@ -408,7 +411,13 @@ test('different electrical nets have no external conductor intersections or over
           for (const second of segmentsOf(b)) {
             const contact = segmentContact(first, second);
             if (!contact.length) continue;
-            // These layouts intend no crossovers: a missing junction dot is not an exemption.
+            const pair = [a.net, b.net].sort().join('|');
+            const interior = contact.length === 1
+              && ![...first, ...second].some(end => samePoint(end, contact[0]));
+            if (interior && intended[config.type]?.has(pair)) {
+              crossovers++;
+              continue;
+            }
             contacts.add(`${a.net} (${a.owner}) / ${b.net} (${b.owner}): `
               + `${contact.length === 1 ? 'intersection' : 'overlap'} at `
               + contact.map(point => `(${point.join(',')})`).join(' to '));
@@ -417,6 +426,7 @@ test('different electrical nets have no external conductor intersections or over
       }
     }
     assert.equal(contacts.size, 0, [...contacts].join('; '));
+    assert.equal(crossovers, intended[config.type]?.size ?? 0, 'each intended crossover is drawn exactly once');
   });
 });
 
@@ -480,8 +490,8 @@ test('MOS symbols have continuous channels and source arrows with preserved pin 
         const [channel, gate, gateLead] = lines.slice(2).map(pointsOf);
         const x = terminals[0][0][0], y = (terminals[0][0][1] + terminals[1][0][1]) / 2;
         assert.equal(terminals[1][0][0], x);
-        assert.equal(Math.abs(terminals[1][0][1] - terminals[0][0][1]), 96);
-        assert.equal(Math.abs(gateLead[0][0] - x), 66);
+        assert.equal(Math.abs(terminals[1][0][1] - terminals[0][0][1]), 48);
+        assert.equal(Math.abs(gateLead[0][0] - x), 34);
         assert.equal(gateLead[0][1], y);
         assert.deepEqual(gateLead[1], [gate[0][0], y]);
         for (const branch of terminals) {
@@ -489,15 +499,16 @@ test('MOS symbols have continuous channels and source arrows with preserved pin 
           assert.equal(branch[1][0], x);
           assert.equal(branch[1][1], branch[2][1]);
           assert.equal(branch[2][0], channel[0][0]);
-          assert.equal(Math.abs(branch[1][1] - y), 20);
+          assert.equal(Math.abs(branch[1][1] - y), 10);
         }
-        for (const [line, length] of [[channel, 56], [gate, 44]]) {
+        for (const [line, length] of [[channel, 28], [gate, 22]]) {
           assert.equal(line.length, 2);
           assert.equal(line[0][0], line[1][0]);
           assert.equal(Math.abs(line[1][1] - line[0][1]), length);
           assert.equal((line[0][1] + line[1][1]) / 2, y);
         }
-        assert.equal(Math.abs(channel[0][0] - gate[0][0]), 8, 'gate is isolated from the channel');
+        assert.equal(Math.abs(channel[0][0] - x), 12);
+        assert.equal(Math.abs(channel[0][0] - gate[0][0]), 5, 'gate is isolated from the channel');
         const sourceIndex = lines.slice(0, 2).findIndex(line => line.includes(`data-net="${escapeXml(device.nodes.s)}"`));
         assert.notEqual(sourceIndex, -1);
         const source = terminals[sourceIndex];
@@ -505,12 +516,12 @@ test('MOS symbols have continuous channels and source arrows with preserved pin 
         assert.equal(Math.sign(sourceY - y), kind === 'pmos' ? -1 : 1);
         const arrows = [...body.matchAll(/<polygon\b[^>]*>/g)].map(match => match[0]);
         assert.equal(arrows.length, 1, `${name}: exactly one source arrow`);
-        assert.ok(arrows[0].includes(`fill="${forDownload ? '#162033' : '#e2e8f0'}"`));
+        assert.ok(arrows[0].includes(`fill="${forDownload ? '#000000' : '#e2e8f0'}"`));
         const [tip, base1, base2] = pointsOf(arrows[0]);
         assert.equal(tip[1], sourceY);
         assert.equal(base1[0], base2[0]);
         assert.equal((base1[1] + base2[1]) / 2, sourceY);
-        assert.equal(Math.abs(base2[1] - base1[1]), 14);
+        assert.equal(Math.abs(base2[1] - base1[1]), 7);
         const inward = Math.sign(channel[0][0] - x);
         assert.equal(Math.sign(tip[0] - base1[0]), kind === 'pmos' ? inward : -inward);
         for (const [arrowX] of [tip, base1, base2]) {
@@ -538,32 +549,31 @@ test('passives use compact zigzags and straight parallel capacitor plates', () =
           const center = points[0][cross];
           const corners = points.slice(2, -2);
           corners.forEach((point, i) => {
-            assert.equal(Math.abs(point[cross] - center), 10);
+            assert.equal(Math.abs(point[cross] - center), 5);
             if (i) assert.equal(point[cross] - center, -(corners[i - 1][cross] - center));
           });
-          assert.equal(Math.abs(points.at(-2)[axis] - points[1][axis]), 36);
+          assert.equal(Math.abs(points.at(-2)[axis] - points[1][axis]), 30);
         } else {
           const plates = lines.filter(line => !line.includes('data-net=')).map(pointsOf).slice(0, 2);
           const [a, b] = plates;
           assert.equal(a.length, 2);
           assert.equal(b.length, 2);
-          assert.equal(Math.hypot(a[1][0] - a[0][0], a[1][1] - a[0][1]), 26);
+          assert.equal(Math.hypot(a[1][0] - a[0][0], a[1][1] - a[0][1]), 18);
           assert.deepEqual([a[1][0] - a[0][0], a[1][1] - a[0][1]], [b[1][0] - b[0][0], b[1][1] - b[0][1]]);
-          assert.equal(Math.hypot(a[0][0] - b[0][0], a[0][1] - b[0][1]), 10);
+          assert.equal(Math.hypot(a[0][0] - b[0][0], a[0][1] - b[0][1]), 6);
         }
       }
     }
   }
 });
 
-test('identifier labels use accessible math subscripts and signal superscripts', () => {
+test('identifier labels use textbook subscripts and signal superscripts', () => {
   const expected = new Map(Object.entries({
     M1: ['M', '1'], M11: ['M', '11'], CL1: ['C', 'L1'], RS2: ['R', 'S2'],
     CF: ['C', 'F'], CGS: ['C', 'GS'], IB: ['I', 'B'], IB1: ['I', 'B1'],
-    VDD: ['V', 'DD'], VSS: ['V', 'SS'], VB_C: ['V', 'B,C'],
-    VB_LC: ['V', 'B,LC'], VB_OC: ['V', 'B,OC'], x: ['x', ''],
-    vin: ['v', 'in'], 'vin+': ['v', 'in', '+'], 'vin-': ['v', 'in', '-'],
-    vout: ['v', 'out'], 'vout+': ['v', 'out', '+'], 'vout-': ['v', 'out', '-']
+    VDD: ['V', 'DD'], Vb: ['V', 'b'], Vb1: ['V', 'b1'], Vb5: ['V', 'b5'], X: ['X', ''], Y: ['Y', ''],
+    vin: ['V', 'in'], 'vin+': ['V', 'in', '+'], 'vin-': ['V', 'in', '−'], vout: ['V', 'out'],
+    '+': ['+', ''], '−': ['−', '']
   }));
   const seen = new Set();
   for (const raw of rawCases) {
@@ -576,13 +586,13 @@ test('identifier labels use accessible math subscripts and signal superscripts',
       }
       for (const [, attributes, body] of labels) {
         const name = attributes.match(/\baria-label="([^"]+)"/)?.[1];
-        if (!name) continue;
-        assert.match(attributes, /\bfont-family="Cambria Math,STIX Two Math,Times New Roman,serif"/);
+        assert.ok(name, 'every label is an accessible identifier');
+        assert.notEqual(name, 'VSS', 'ground symbols replace a VSS label');
         if (!expected.has(name)) continue;
         const [base, subscript, superscript] = expected.get(name);
         assert.equal(body, escapeXml(base)
-          + (subscript ? `<tspan baseline-shift="sub" font-size="75%">${escapeXml(subscript)}</tspan>` : '')
-          + (superscript ? `<tspan baseline-shift="super" font-size="75%">${escapeXml(superscript)}</tspan>` : ''),
+          + (subscript ? `<tspan baseline-shift="sub" font-size="72%">${escapeXml(subscript)}</tspan>` : '')
+          + (superscript ? `<tspan baseline-shift="super" font-size="72%">${escapeXml(superscript)}</tspan>` : ''),
         `${name}: correct base, subscript, and optional polarity superscript`);
         seen.add(name);
       }
@@ -591,7 +601,7 @@ test('identifier labels use accessible math subscripts and signal superscripts',
   assert.deepEqual([...seen].sort(), [...expected.keys()].sort(), 'every requested notation is exercised');
 });
 
-test('MOS groups show one vertically centered name without duplicate type or terminal labels', () => {
+test('MOS groups show one name without duplicate type or terminal labels', () => {
   for (const raw of rawCases) {
     for (const forDownload of [false, true]) {
       const { svg, devices } = render(describe(raw).config, forDownload);
@@ -602,9 +612,6 @@ test('MOS groups show one vertically centered name without duplicate type or ter
         assert.ok(attributes.includes(`aria-label="${name}"`));
         assert.equal(text.replace(/<[^>]+>/g, ''), name);
         assert.match(attributes, /\bdominant-baseline="middle"/);
-        const terminals = [...body.matchAll(/<polyline\b[^>]*>/g)].slice(0, 2).map(match => pointsOf(match[0]));
-        const centerY = (terminals[0][0][1] + terminals[1][0][1]) / 2;
-        assert.equal(Number(attributes.match(/\by="([^"]+)"/)[1]), centerY);
         const device = devices.find(item => item.name === name);
         assert.equal(device.kind, kind, 'type remains in legend metadata');
         assert.deepEqual(Object.keys(device.nodes).sort(), ['d', 'g', 's'], 'all terminal metadata remains');
@@ -620,41 +627,35 @@ test('capacitor AC grounds are explained once without removing ground symbols', 
       const { svg, devices } = render(describe(raw).config, forDownload);
       assert.doesNotMatch(svg, /AC GND|D \/ S mark device terminals/);
       assert.match(svg, /<desc>[^<]*All capacitor ground symbols denote AC ground\./);
-      assert.match(svg, /Source arrows indicate polarity\. Capacitor grounds: AC ground\.<\/text>/);
       for (const [, name, body] of svg.matchAll(/<g data-device="([^"]+)" data-kind="capacitor">([\s\S]*?)<\/g>/g)) {
         assert.equal([...body.matchAll(/<text\b/g)].length, 1, `${name}: only its identifier is labeled`);
         if (devices.find(device => device.name === name).nodes.n !== 'AC ground') continue;
         const lines = [...body.matchAll(/<polyline\b[^>]*>/g)].map(match => pointsOf(match[0]));
         assert.equal(lines.length, 7, `${name}: leads, plates, and all three ground bars remain`);
         const [x, end] = lines[3][1];
-        [12, 8, 4].forEach((half, i) => {
-          assert.deepEqual(lines[i + 4], [[x - half, end + i * 5], [x + half, end + i * 5]],
-            `${name}: unchanged ground bar geometry`);
+        [8, 5, 2].forEach((half, i) => {
+          assert.deepEqual(lines[i + 4], [[x - half, end + i * 4], [x + half, end + i * 4]],
+            `${name}: three-bar ground geometry`);
         });
       }
     }
   }
 });
 
-test('schematic prose and headers keep their inherited non-math font', () => {
-  const seen = new Set();
+test('schematic labels use one italic bold sans font without prose', () => {
   for (const raw of rawCases) {
     for (const forDownload of [false, true]) {
       const { svg } = render(describe(raw).config, forDownload);
-      assert.match(svg, /^<svg\b[^>]*font-family="Consolas,Menlo,monospace"/);
-      const labels = [...svg.matchAll(/<text\b([^>]*)>([\s\S]*?)<\/text>/g)];
-      assert.match(labels[0][2], /^(?:NMOS|PMOS) input · /);
-      for (const [, attributes, body] of labels) {
-        if (attributes.includes('aria-label=')) continue;
-        assert.doesNotMatch(attributes, /font-family|baseline-shift/);
-        assert.doesNotMatch(body, /<tspan\b/);
-        seen.add(body);
+      assert.match(svg, /^<svg\b[^>]*font-family="Helvetica,Arial,sans-serif"/);
+      for (const [, attributes, body] of svg.matchAll(/<text\b([^>]*)>([\s\S]*?)<\/text>/g)) {
+        assert.match(attributes, /\baria-label="/);
+        assert.doesNotMatch(attributes, /font-family/);
+        assert.match(attributes, /\bfont-style="italic"/);
+        assert.match(attributes, /\bfont-weight="600"/);
+        assert.ok(body.replace(/<[^>]+>/g, '').length <= 4, `short identifier, not prose: ${body}`);
       }
     }
   }
-  assert.ok(seen.has('mirror'));
-  assert.ok(seen.has('Source arrows indicate polarity. Capacitor grounds: AC ground.'));
-  assert.ok(!seen.has('ideal bias'));
 });
 
 test('normalization rejects markup-bearing enum values before rendering', () => {

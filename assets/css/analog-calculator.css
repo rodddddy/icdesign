@@ -89,11 +89,7 @@
   width: 100%;
   max-width: 100%;
   min-width: 0;
-  max-height: 580px;
-  overflow: auto;
-  overscroll-behavior: contain;
-  scrollbar-color: var(--border-strong) var(--bg-soft);
-  scrollbar-width: thin;
+  overflow: hidden;
 }
 .analog-page .circuit-box svg {
   display: block;
@@ -104,7 +100,6 @@
   max-height: 578px;
   margin: 0 auto;
 }
-.analog-page .circuit-box.analog-actual-size svg { max-width: none; max-height: none; }
 .analog-page .analog-placeholder { margin: 0; padding: 32px 18px; color: var(--muted); font-size: 13px; }
 .analog-page .analog-toolbar { display: flex; align-items: center; flex-wrap: wrap; gap: 10px; margin-top: 14px; }
 .analog-page .btn-add { min-height: 38px; max-width: 100%; white-space: normal; line-height: 1.5; }
@@ -225,6 +220,5 @@
   .analog-page .analog-metric-value { font-size: 23px; }
   .analog-page .analog-formulas > div { grid-template-columns: minmax(0, 1fr); gap: 5px; }
   .analog-page .analog-formulas dt { color: var(--violet); }
-  .analog-page .circuit-box { max-height: 470px; }
-  .analog-page .circuit-box:not(.analog-actual-size) svg { max-height: 468px; }
+  .analog-page .circuit-box svg { max-height: 468px; }
 }
