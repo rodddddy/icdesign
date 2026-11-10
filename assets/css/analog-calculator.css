@@ -75,7 +75,13 @@
 }
 .analog-page .analog-workspace > .panel { margin: 0; }
 .analog-page .analog-parameters-panel { grid-area: parameters; }
-.analog-page .analog-preview-panel { grid-area: schematic; }
+.analog-page .analog-preview-panel {
+  grid-area: schematic;
+  position: sticky;
+  top: 74px;
+  max-height: calc(100vh - 90px);
+  overflow-y: auto;
+}
 .analog-page .analog-section-head {
   display: flex;
   align-items: center;
@@ -199,6 +205,7 @@
 
 @media (max-width: 800px) {
   .analog-page .analog-workspace { grid-template-columns: minmax(0, 1fr); grid-template-areas: "schematic" "parameters"; }
+  .analog-page .analog-preview-panel { position: static; max-height: none; overflow-y: visible; }
   .analog-page #analog-parameters { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); column-gap: 22px; }
   .analog-page .analog-config-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
   .analog-page .analog-topology-control { grid-column: 1 / -1; }
