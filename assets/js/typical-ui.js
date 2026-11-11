@@ -88,6 +88,11 @@
     const fail = event => {
       if (worker !== instance) return;
       event.preventDefault();
+      // A warm-up failure stays silent; the next Generate retries and reports it.
+      if (!requests.size) {
+        stopWorker();
+        return;
+      }
       const error = workerError(event.message || 'The worker script could not be loaded or its response could not be read.');
       stopWorker(error);
       showError('Circuit worker unavailable', error);
@@ -98,9 +103,17 @@
     return instance;
   }
 
+  function warmWorker() {
+    try {
+      startWorker();
+    } catch {
+      worker = null;
+    }
+  }
+
   function requestWorker(payload) {
     return new Promise((resolve, reject) => {
-      const instance = payload.action === 'generate' ? startWorker() : worker;
+      const instance = payload.action === 'generate' ? worker || startWorker() : worker;
       if (!instance) {
         reject(new Error('The circuit worker is no longer available. Generate the circuit again before exporting.'));
         return;
@@ -121,7 +134,11 @@
 
   function invalidate() {
     generation++;
-    stopWorker();
+    // Only a busy worker is terminated to cancel; an idle one is reused so its scripts are not reloaded.
+    if (requests.size) {
+      stopWorker();
+      warmWorker();
+    }
     lastResult = null;
     clearError();
     $('typical-results').hidden = true;
@@ -703,6 +720,7 @@
       syncDff();
       rebuildFields(true);
       updatePreview();
+      warmWorker();
     } catch (error) {
       showError('Unable to initialize generator', error);
       $('typical-generate').disabled = true;

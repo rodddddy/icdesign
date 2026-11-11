@@ -872,7 +872,8 @@
       }
     });
     const TRACK = 12;
-    const colXs = [30];
+    const colXs = [Math.max(30, ...ids.filter(id => !level.get(id)).map(id =>
+      2 + (isAlias(id) ? 18 + labelOf(id).length * 6 : 6 + labelOf(id).length * 7)))];
     for (let lv = 1; lv <= maxLevel; lv++) {
       const crossing = ids.filter(id => level.get(id) < lv
         && consumers.get(id).some(dst => level.get(dst) >= lv)).length;
@@ -904,6 +905,10 @@
       if (nd.type === 'CONST0') return 'GND';
       if (nd.type === 'CONST1') return 'VDD';
       return nd.type;
+    }
+    // Inputs aliased to a driven net are feedback, drawn as named stubs rather than pins.
+    function isAlias(id) {
+      return nodes[id].type === 'IN' && opts?.netAliases?.[id] != null;
     }
     const inOrder = [];
     const topMargin = 36 + TRACK * lv0.length;
@@ -1054,7 +1059,7 @@
         y1: signal.y - 14, y2: signal.y + 3 });
     });
     const inputBox = (id, x, y) => ({
-      x1: x - 10 - labelOf(id).length * 7.5, x2: x + 10, y1: y - 7, y2: y + 7
+      x1: x - (isAlias(id) ? 20 + labelOf(id).length * 6 : 10 + labelOf(id).length * 7.5), x2: x + 10, y1: y - 7, y2: y + 7
     });
     const overlaps = (a, b) => a.x1 < b.x2 && a.x2 > b.x1 && a.y1 < b.y2 && a.y2 > b.y1;
     inOrder.forEach(id => {
@@ -2581,7 +2586,10 @@
     /* nodes */
     ids.forEach(id => {
       const p = pos.get(id), nd = nodes[id];
-      if (!p.gate) {
+      if (isAlias(id)) {
+        svg.push('<g class="input-ref"' + netAttr(id) + '><path class="gl" d="' + pathData([{ x: p.x - 12, y: p.y }, outPin(id)]) + '"/>'
+          + '<text x="' + (p.x - 18) + '" y="' + (p.y + 3) + '" text-anchor="end" class="net-label">' + esc(labelOf(id)) + '</text></g>');
+      } else if (!p.gate) {
         svg.push('<circle class="term"' + netAttr(id) + ' cx="' + (p.x + 6) + '" cy="' + p.y + '" r="3.2"/>');
         svg.push('<text x="' + (p.x - 6) + '" y="' + (p.y + 4) + '" text-anchor="end" class="lbl"' + netAttr(id) + '>' + esc(labelOf(id)) + '</text>');
       } else {
