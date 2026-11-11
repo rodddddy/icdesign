@@ -872,8 +872,8 @@
       }
     });
     const TRACK = 12;
-    const colXs = [Math.max(30, ...ids.filter(id => !level.get(id)).map(id =>
-      2 + (isAlias(id) ? 18 + labelOf(id).length * 6 : 6 + labelOf(id).length * 7)))];
+    const colXs = [Math.max(30, ...ids.filter(id => !level.get(id) && !isAlias(id)).map(id =>
+      8 + labelOf(id).length * 7))];
     for (let lv = 1; lv <= maxLevel; lv++) {
       const crossing = ids.filter(id => level.get(id) < lv
         && consumers.get(id).some(dst => level.get(dst) >= lv)).length;
@@ -906,16 +906,16 @@
       if (nd.type === 'CONST1') return 'VDD';
       return nd.type;
     }
-    // Inputs aliased to a driven net are feedback, drawn as named stubs rather than pins.
+    // Inputs aliased to a driven net are feedback: they get no pin and every use is a named stub at the gate.
     function isAlias(id) {
-      return nodes[id].type === 'IN' && opts?.netAliases?.[id] != null;
+      return nodes[id]?.type === 'IN' && opts?.netAliases?.[id] != null;
     }
     const inOrder = [];
-    const topMargin = 36 + TRACK * lv0.length;
+    const topMargin = 36 + TRACK * lv0.filter(id => !isAlias(id)).length;
     let yCursor = topMargin;
     lv0.forEach(id => {
       pos.set(id, { x: colX(0), y: yCursor, w: 0, h: 20, label: labelOf(id) });
-      inOrder.push(id);
+      if (!isAlias(id)) inOrder.push(id);
       yCursor += 48;
     });
 
@@ -1059,7 +1059,7 @@
         y1: signal.y - 14, y2: signal.y + 3 });
     });
     const inputBox = (id, x, y) => ({
-      x1: x - (isAlias(id) ? 20 + labelOf(id).length * 6 : 10 + labelOf(id).length * 7.5), x2: x + 10, y1: y - 7, y2: y + 7
+      x1: x - 10 - labelOf(id).length * 7.5, x2: x + 10, y1: y - 7, y2: y + 7
     });
     const overlaps = (a, b) => a.x1 < b.x2 && a.x2 > b.x1 && a.y1 < b.y2 && a.y2 > b.y1;
     inOrder.forEach(id => {
@@ -1074,7 +1074,7 @@
         const box = inputBox(id, p.x, y);
         if (labelBoxes.some(b => overlaps(box, b))) continue;
         if (ids.some(other => {
-          if (other === id) return false;
+          if (other === id || isAlias(other)) return false;
           const q = pos.get(other);
           return overlaps(box, !q.gate ? inputBox(other, q.x, q.y)
             : { x1: gateLeft(other) - 8, x2: q.x + q.w + 8, y1: q.y - q.h / 2 - 8, y2: q.y + q.h / 2 + 8 });
@@ -1126,7 +1126,7 @@
 
     /* canvas size */
     let maxY = 0;
-    pos.forEach(p => maxY = Math.max(maxY, p.y + p.h / 2 + (p.gate ? 16 : 0)));
+    pos.forEach((p, id) => { if (!isAlias(id)) maxY = Math.max(maxY, p.y + p.h / 2 + (p.gate ? 16 : 0)); });
     let width = outputX + Math.max(90, ...roots.map(r => r.label.length * 7.5 + 20));
     let height = maxY + 40;
 
@@ -1145,6 +1145,7 @@
     });
     const bySrc = new Map();
     edges.forEach(e => {
+      if (isAlias(e.src)) return;
       if (!bySrc.has(e.src)) bySrc.set(e.src, []);
       bySrc.get(e.src).push(e);
     });
@@ -1507,7 +1508,8 @@
         ? 'H ' + f(L.x2)
         : 'V ' + f(L.via) + ' H ' + f(L.x2) + ' V ' + f(L.y)).join(' ');
     };
-    const namedInputs = new Set(), inputReferences = [];
+    const namedInputs = new Set(edges.filter(e => isAlias(e.src))), inputReferences = [];
+    const aliasEdgeCount = namedInputs.size;
     const fixedLabelCount = labelBoxes.length;
     const physicalEdges = list => list.filter(e => !namedInputs.has(e));
     const sourceStub = src => {
@@ -1528,7 +1530,7 @@
     const dstr = (...parts) => parts.filter(p => p && p.trim()).join(' ');
     let finalRouting = false;
     const pushWire = (src, d) => {
-      if (!finalRouting && !namedInputs.size && !pos.get(src).gate && bySrc.get(src).length === 1 && !rootIds.has(src)) {
+      if (!finalRouting && namedInputs.size === aliasEdgeCount && !pos.get(src).gate && bySrc.get(src).length === 1 && !rootIds.has(src)) {
         const t = d.split(' '), p = pos.get(src), x = f(p.x + 6);
         if (t[3] === 'H' && t[5] === 'V' && t[7] === 'H' && +t[4] > x && +t[8] > +t[4]) {
           const y = +t[6], endX = +t[4], box = inputBox(src, p.x, y);
@@ -1870,6 +1872,7 @@
       }
       return { crossings: crossings.size, pairs, contacts };
     }
+    if (aliasEdgeCount) layoutInputReferences();
     routeAll();
     const segmentWork = () => (usedH.length + usedV.length) ** 2;
     let workLeft = 25000 - segmentWork(), trials = 8, dirty = false;
@@ -1996,6 +1999,7 @@
       for (;;) {
         let restored = false;
         for (const e of [...namedInputs]) {
+          if (isAlias(e.src)) continue;
           namedInputs.delete(e);
           refreshInputReferences();
           const d = branchRoute(e);
@@ -2586,10 +2590,8 @@
     /* nodes */
     ids.forEach(id => {
       const p = pos.get(id), nd = nodes[id];
-      if (isAlias(id)) {
-        svg.push('<g class="input-ref"' + netAttr(id) + '><path class="gl" d="' + pathData([{ x: p.x - 12, y: p.y }, outPin(id)]) + '"/>'
-          + '<text x="' + (p.x - 18) + '" y="' + (p.y + 3) + '" text-anchor="end" class="net-label">' + esc(labelOf(id)) + '</text></g>');
-      } else if (!p.gate) {
+      if (isAlias(id)) return;
+      if (!p.gate) {
         svg.push('<circle class="term"' + netAttr(id) + ' cx="' + (p.x + 6) + '" cy="' + p.y + '" r="3.2"/>');
         svg.push('<text x="' + (p.x - 6) + '" y="' + (p.y + 4) + '" text-anchor="end" class="lbl"' + netAttr(id) + '>' + esc(labelOf(id)) + '</text>');
       } else {
