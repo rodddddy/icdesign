@@ -3,11 +3,12 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>ICDesign Lab — Online IC Design Tools</title>
-  <meta name="description" content="Free online tools for analog and digital IC design: basic analog circuit calculations, combinational logic synthesis, gate-level schematics, and more.">
+  <title>ICDesign Lab — Design Aids for Analog IC Engineers</title>
+  <meta name="description" content="Free online helpers for IC design, focused on analog engineers: amplifier gain, bandwidth and pole estimates with equations and schematics, plus combinational and typical digital circuit generators.">
   <link rel="stylesheet" href="assets/css/style.css">
   <link rel="icon" href="data:image/svg+xml,&lt;svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'&gt;&lt;rect x='2' y='2' width='12' height='12' rx='2' fill='%2322d3ee'/&gt;&lt;/svg&gt;">
   <script type="speculationrules">{"prerender":[{"where":{"href_matches":"/*"},"eagerness":"moderate"}]}</script>
+  <script src="assets/js/i18n.js"></script>
 </head>
 <body>
   <header class="topbar">
@@ -16,15 +17,17 @@
       <nav class="topnav">
         <a href="/">Tools</a>
         <a href="https://github.com/rodddddy/icdesign" target="_blank" rel="noopener">GitHub</a>
+        <button class="lang-toggle" id="lang-toggle" type="button" lang="zh-CN" title="切换到中文" aria-label="切换到中文" data-no-i18n>中文</button>
       </nav>
     </div>
   </header>
 
   <main class="wrap">
     <section class="hero">
-      <h1>Build circuits <span class="grad">in your browser</span></h1>
-      <p>A growing collection of free, open-source tools for analog and digital integrated circuit design.
-         No installation, no sign-up — pick a tool and start designing.</p>
+      <h1>Practical tools for <span class="grad">analog IC designers</span></h1>
+      <p>A growing collection of free, open-source helpers for everyday integrated circuit design work, with a focus on analog ICs.
+         Quickly estimate amplifier gain, bandwidth and poles, review the governing equations and get clean schematics,
+         plus logic utilities for the digital blocks around them. Runs in your browser, no installation or sign-up.</p>
     </section>
 
     <h2 class="section-title">Tools</h2>

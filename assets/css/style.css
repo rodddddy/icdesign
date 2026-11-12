@@ -64,9 +64,15 @@ a:hover { text-decoration: underline; }
   background: linear-gradient(135deg, var(--accent), var(--violet));
   box-shadow: 0 0 10px rgba(34, 211, 238, 0.6);
 }
-.topnav { margin-left: auto; display: flex; gap: 20px; font-size: 14px; }
+.topnav { margin-left: auto; display: flex; align-items: center; gap: 20px; font-size: 14px; }
 .topnav a { color: var(--muted); }
 .topnav a:hover { color: var(--text); text-decoration: none; }
+.lang-toggle {
+  min-width: 52px; background: transparent; border: 1px dashed var(--border-strong); color: var(--muted);
+  border-radius: 8px; padding: 5px 10px; font-size: 13px; cursor: pointer; font-family: var(--mono);
+}
+.lang-toggle:hover { color: var(--accent); border-color: var(--accent); }
+.lang-toggle:focus-visible { outline: 2px solid var(--accent); outline-offset: 3px; }
 
 .hero { padding: 72px 0 32px; }
 .hero h1 {
