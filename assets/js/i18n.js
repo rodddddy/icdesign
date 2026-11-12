@@ -31,10 +31,10 @@
     "Synthesis failed.": "综合失败。",
 
     // home
-    "ICDesign Lab — Design Aids for Analog IC Engineers": "ICDesign Lab — 面向模拟 IC 工程师的设计辅助工具",
-    "Practical tools for": "面向模拟 IC 工程师的",
-    "analog IC designers": "设计辅助工具",
-    "A growing collection of free, open-source helpers for everyday integrated circuit design work, with a focus on analog ICs. Quickly estimate amplifier gain, bandwidth and poles, review the governing equations and get clean schematics, plus logic utilities for the digital blocks around them. Runs in your browser, no installation or sign-up.": "一套持续扩充的免费开源工具，辅助日常集成电路设计工作，侧重模拟 IC：快速估算放大器的增益、带宽与极点，查看对应公式并生成清晰的原理图；也为周边数字模块提供逻辑辅助工具。直接在浏览器中运行，无需安装或注册。",
+    "ICDesign Lab — IC Design Tools": "ICDesign Lab — IC 设计辅助工具",
+    "Tools for": "IC 设计",
+    "IC design": "辅助工具",
+    "A growing set of free, open-source tools to help with everyday IC design. Runs in your browser, no installation or sign-up.": "一系列持续更新的免费开源工具，辅助日常 IC 设计。直接在浏览器中运行，无需安装或注册。",
     "Combinational Logic Generator": "组合逻辑生成器",
     "Enter a truth table, get minimized Boolean expressions and a gate-level schematic. Constrain the mapper to NAND / NOR / MUX / XOR and more.": "输入真值表，获得化简后的布尔表达式和门级原理图。可将映射限制为 NAND / NOR / MUX / XOR 等门类型。",
     "Logic Synthesis": "逻辑综合",
