@@ -64,27 +64,28 @@
             <button class="btn-add mode-tab" type="button" role="tab" data-mode="current" aria-selected="true">String current</button>
             <button class="btn-add mode-tab" type="button" role="tab" data-mode="resistance" aria-selected="false">Total resistance</button>
           </div>
+          <div class="dv-range dv-voltage-range">
+            <div class="dv-field"><label for="dv-v-min">Minimum VIN (V)</label><input type="number" id="dv-v-min" step="any" min="0" value="3.2"></div>
+            <div class="dv-field"><label for="dv-v-max">Maximum VIN (V)</label><input type="number" id="dv-v-max" step="any" min="0" value="6"></div>
+          </div>
+          <p class="hint">VIN defaults to 0.8 × the lowest target and 1.2 × the highest target. Each limit follows target edits until you override it.</p>
           <div id="dv-current-fields">
-            <div class="dv-range dv-voltage-range">
-              <div class="dv-field"><label for="dv-v-min">Minimum VIN (V)</label><input type="number" id="dv-v-min" step="any" min="0" value="3.2"></div>
-              <div class="dv-field"><label for="dv-v-max">Maximum VIN (V)</label><input type="number" id="dv-v-max" step="any" min="0" value="6"></div>
-            </div>
-            <p class="hint">VIN defaults to 0.8 × the lowest target and 1.2 × the highest target. Each limit follows target edits until you override it.</p>
             <div class="dv-range">
-              <div class="dv-field"><label for="dv-i-min">Minimum current</label><input type="number" id="dv-i-min" step="any" min="0" value="1"></div>
-              <div class="dv-field"><label for="dv-i-max">Maximum current</label><input type="number" id="dv-i-max" step="any" min="0" value="2"></div>
+              <div class="dv-field"><label for="dv-i-min">Minimum current</label><input type="number" id="dv-i-min" step="any" min="0" value="0.1"></div>
+              <div class="dv-field"><label for="dv-i-max">Maximum current</label><input type="number" id="dv-i-max" step="any" min="0" value="5"></div>
               <div class="dv-field"><label for="dv-i-unit">Unit</label>
                 <select id="dv-i-unit"><option value="1e-9">nA</option><option value="1e-6" selected>µA</option><option value="1e-3">mA</option></select></div>
             </div>
+            <div class="dv-limit-warning" id="dv-limit-warning" role="alert" hidden></div>
           </div>
           <div class="dv-range" id="dv-resistance-fields" hidden>
-            <div class="dv-field"><label for="dv-r-min">Minimum resistance</label><input type="number" id="dv-r-min" step="any" min="0" value="2.5"></div>
-            <div class="dv-field"><label for="dv-r-max">Maximum resistance</label><input type="number" id="dv-r-max" step="any" min="0" value="5"></div>
+            <div class="dv-field"><label for="dv-r-min">Minimum resistance</label><input type="number" id="dv-r-min" step="any" min="0" value="1.2"></div>
+            <div class="dv-field"><label for="dv-r-max">Maximum resistance</label><input type="number" id="dv-r-max" step="any" min="0" value="32"></div>
             <div class="dv-field"><label for="dv-r-unit">Unit</label>
               <select id="dv-r-unit"><option value="1">Ω</option><option value="1e3">kΩ</option><option value="1e6" selected>MΩ</option></select></div>
           </div>
           <p class="dv-derived"><span>Allowed total resistance</span> <output id="dv-range">—</output></p>
-          <p class="hint" id="dv-current-note">RMIN = VINMAX / IMAX; RMAX = VINMIN / IMIN. The current limits must hold over the entire VIN operating range.</p>
+          <p class="hint">RMIN = VINMAX / IMAX; RMAX = VINMIN / IMIN. The current and resistance ranges stay in sync over the VIN range: editing one updates the other.</p>
           <div class="dv-settings">
             <div class="dv-field dv-unit-field"><label for="dv-ru">Unit resistor Ru</label>
               <div class="dv-with-unit"><input type="number" id="dv-ru" step="any" min="0" value="100">

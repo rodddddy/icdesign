@@ -175,6 +175,18 @@ test('custom VIN voltages determine resistance independently of target voltages'
   checkConsistency(r, input);
 });
 
+test('resistance mode reports string current over the given VIN range', () => {
+  const input = base({ constraint: { mode: 'resistance', min: 1.2e6, max: 32e6, vMin: 3.2, vMax: 6 }, maxParallel: 20 });
+  const r = solve(input);
+  assert.deepEqual(r.errors, []);
+  assert.equal(r.vMin, 3.2);
+  assert.equal(r.vMax, 6);
+  const s = r.solutions[r.selected];
+  assert.ok(Math.abs(s.currentMin - 3.2 / s.totalR) < 1e-15);
+  assert.ok(Math.abs(s.current - 6 / s.totalR) < 1e-15);
+  assert.match(solve(base({ constraint: { mode: 'resistance', min: 1e6, max: 2e6, vMin: 6, vMax: 3.2 } })).errors[0], /Minimum VIN/);
+});
+
 test('nonintersecting current constraints explain how to recover', () => {
   const r = solve(base({ constraint: { mode: 'current', min: 2e-6, max: 2e-6, vMin: 3.2, vMax: 6 } }));
   assert.match(r.errors[0], /No total resistance satisfies/);

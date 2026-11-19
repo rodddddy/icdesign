@@ -239,9 +239,10 @@
     if (!(min > 0 && max > 0 && Number.isFinite(max))) errors.push('Range limits must be greater than 0.');
     else if (min > max) errors.push('The range minimum must not exceed the maximum.');
     const byCurrent = constraint.mode === 'current';
-    const vMin = byCurrent ? Number(constraint.vMin) : Math.min(...taps.map(tap => tap.vTrip));
-    const vMax = byCurrent ? Number(constraint.vMax) : Math.max(...taps.map(tap => tap.vTrip));
-    if (byCurrent) {
+    const useVin = byCurrent || constraint.vMin !== undefined || constraint.vMax !== undefined;
+    const vMin = useVin ? Number(constraint.vMin) : Math.min(...taps.map(tap => tap.vTrip));
+    const vMax = useVin ? Number(constraint.vMax) : Math.max(...taps.map(tap => tap.vTrip));
+    if (useVin) {
       if (!(vMin > 0 && vMax > 0 && Number.isFinite(vMax))) errors.push('VIN operating voltages must be greater than 0.');
       else if (vMin > vMax) errors.push('Minimum VIN must not exceed maximum VIN.');
     }

@@ -9,7 +9,7 @@
     iMin: byId('dv-i-min'), iMax: byId('dv-i-max'), iUnit: byId('dv-i-unit'),
     vMin: byId('dv-v-min'), vMax: byId('dv-v-max'),
     rMin: byId('dv-r-min'), rMax: byId('dv-r-max'), rUnit: byId('dv-r-unit'),
-    range: byId('dv-range'), currentNote: byId('dv-current-note'),
+    range: byId('dv-range'), limitWarning: byId('dv-limit-warning'),
     ru: byId('dv-ru'), ruUnit: byId('dv-ru-unit'), parallel: byId('dv-parallel'), tol: byId('dv-tol'),
     schematic: byId('dv-schematic'), downloadSvg: byId('dv-download-svg'), downloadPng: byId('dv-download-png'),
     downloadStatus: byId('dv-download-status'),
@@ -25,6 +25,7 @@
   let result = null;
   let selected = -1;
   let timer = 0;
+  let driver = 'current';
   const editedVoltageLimits = new Set();
 
   function element(tag, className, text) {
@@ -113,7 +114,6 @@
     ui.tabs.forEach(tab => tab.setAttribute('aria-selected', String(tab.dataset.mode === mode)));
     ui.currentFields.hidden = mode !== 'current';
     ui.resistanceFields.hidden = mode !== 'resistance';
-    ui.currentNote.hidden = mode !== 'current';
   }
 
   function updateVoltageDefaults() {
@@ -121,6 +121,54 @@
     if (!targets.length) return;
     if (!editedVoltageLimits.has(ui.vMin)) ui.vMin.value = Number((Math.min(...targets) * 0.8).toPrecision(12));
     if (!editedVoltageLimits.has(ui.vMax)) ui.vMax.value = Number((Math.max(...targets) * 1.2).toPrecision(12));
+  }
+
+  const scaled = (input, select) => number(input) * Number(select.value);
+
+  function writeRange(minInput, maxInput, select, min, max) {
+    const scales = Array.from(select.options, option => Number(option.value));
+    let scale = Number(select.value);
+    const fits = value => value / scale >= 0.01 && value / scale < 1e4;
+    if (!fits(min) || !fits(max)) {
+      scale = scales.filter(s => max / s >= 1).pop() || scales[0];
+      select.selectedIndex = scales.indexOf(scale);
+    }
+    minInput.value = Number((min / scale).toPrecision(6));
+    maxInput.value = Number((max / scale).toPrecision(6));
+  }
+
+  function syncLimits() {
+    const vMin = number(ui.vMin), vMax = number(ui.vMax);
+    if (!(vMin > 0 && vMax > 0)) return;
+    if (driver === 'current') {
+      const iMin = scaled(ui.iMin, ui.iUnit), iMax = scaled(ui.iMax, ui.iUnit);
+      if (iMin > 0 && iMax > 0) writeRange(ui.rMin, ui.rMax, ui.rUnit, vMax / iMax, vMin / iMin);
+    } else {
+      const rMin = scaled(ui.rMin, ui.rUnit), rMax = scaled(ui.rMax, ui.rUnit);
+      if (rMin > 0 && rMax > 0) writeRange(ui.iMin, ui.iMax, ui.iUnit, vMin / rMax, vMax / rMin);
+    }
+  }
+
+  function showLimitWarning() {
+    const vMin = number(ui.vMin), vMax = number(ui.vMax);
+    const iMin = scaled(ui.iMin, ui.iUnit), iMax = scaled(ui.iMax, ui.iUnit);
+    const rMin = vMax / iMax, rMax = vMin / iMin;
+    const conflict = vMin > 0 && vMax >= vMin && iMin > 0 && iMax >= iMin && rMin > rMax * (1 + 1e-9);
+    ui.limitWarning.hidden = !conflict;
+    ui.limitWarning.replaceChildren();
+    if (!conflict) return false;
+    const times = value => Number(value.toPrecision(3)) + '×';
+    const list = element('ul');
+    [
+      'At VIN = ' + fmt(vMax, 'V') + ', I ≤ ' + fmt(iMax, 'A') + ' needs R ≥ ' + fmt(rMin, 'Ω') + '.',
+      'At VIN = ' + fmt(vMin, 'V') + ', I ≥ ' + fmt(iMin, 'A') + ' needs R ≤ ' + fmt(rMax, 'Ω') + '.',
+      'VIN varies ' + times(vMax / vMin) + ', but IMAX / IMIN is only ' + times(iMax / iMin) + '.',
+      'Raise the maximum current to at least ' + fmt(iMin * vMax / vMin, 'A') + ', lower the minimum current to at most ' + fmt(iMax * vMin / vMax, 'A') + ', or narrow the VIN range.'
+    ].forEach(text => list.append(element('li', '', text)));
+    ui.limitWarning.append(element('strong', '', 'No total resistance meets these current limits.'), list);
+    mark(ui.iMin, false);
+    mark(ui.iMax, false);
+    return true;
   }
 
   function readInput() {
@@ -136,15 +184,8 @@
     const scale = Number(pair[2].value);
     const min = positive(pair[0]) * scale, max = positive(pair[1]) * scale;
     const unit = positive(ui.ru) * Number(ui.ruUnit.value);
-    let vMin, vMax;
-    if (mode === 'current') {
-      vMin = positive(ui.vMin);
-      vMax = positive(ui.vMax);
-      if (!(vMin > 0 && vMax > 0)) valid = false;
-    } else {
-      mark(ui.vMin, true);
-      mark(ui.vMax, true);
-    }
+    const vMin = positive(ui.vMin), vMax = positive(ui.vMax);
+    if (!(vMin > 0 && vMax > 0)) valid = false;
     const maxParallel = number(ui.parallel);
     if (!mark(ui.parallel, Number.isInteger(maxParallel) && maxParallel >= 1 && maxParallel <= 100)) valid = false;
     const tolRaw = number(ui.tol);
@@ -225,7 +266,9 @@
     timer = 0;
     ui.taps.querySelectorAll('tr').forEach(updateRowRatio);
     updateVoltageDefaults();
+    syncLimits();
     const input = readInput();
+    showLimitWarning();
     clearOutput();
     ui.range.textContent = '—';
     if (!input) {
@@ -242,7 +285,7 @@
       console.error('Divider solve failed:', error);
       return;
     }
-    if (Number.isFinite(solved.rMin)) {
+    if (Number.isFinite(solved.rMin) && solved.rMin <= solved.rMax * (1 + 1e-9)) {
       ui.range.textContent = fmt(solved.rMin, 'Ω') + ' – ' + fmt(solved.rMax, 'Ω') + '  (' + Number(solved.tMin.toPrecision(6)) + ' – ' + Number(solved.tMax.toPrecision(6)) + ' Ru)';
     }
     solved.warnings.forEach(text => ui.warnings.append(element('li', '', text)));
@@ -347,6 +390,8 @@
   ui.tabs.forEach(tab => tab.addEventListener('click', () => { setMode(tab.dataset.mode); solveNow(); }));
   document.querySelector('.dv-inputs').addEventListener('input', event => {
     if (event.target === ui.vMin || event.target === ui.vMax) editedVoltageLimits.add(event.target);
+    if ([ui.iMin, ui.iMax, ui.iUnit].includes(event.target)) driver = 'current';
+    if ([ui.rMin, ui.rMax, ui.rUnit].includes(event.target)) driver = 'resistance';
     schedule();
   });
   document.querySelector('.dv-inputs').addEventListener('change', event => { if (event.target.tagName === 'SELECT') solveNow(); });
