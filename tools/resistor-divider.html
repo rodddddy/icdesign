@@ -4,7 +4,7 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>Resistor Divider Solver — ICDesign Lab</title>
-  <meta name="description" content="Turn target and reference voltages into a tapped resistor string built from one unit resistor, within a current or total-resistance limit, with series/parallel unit counts and a schematic.">
+  <meta name="description" content="Turn target and reference voltages into a resistor string built from one unit resistor — plain taps or taps with bypass switches — within a current or total-resistance limit, with unit counts and a schematic.">
   <link rel="stylesheet" href="../assets/css/style.css">
   <link rel="stylesheet" href="../assets/css/divider.css">
   <link rel="icon" href="data:image/svg+xml,&lt;svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'&gt;&lt;rect x='2' y='2' width='12' height='12' rx='2' fill='%2322d3ee'/&gt;&lt;/svg&gt;">
@@ -31,10 +31,11 @@
       <a class="back-link" href="/">&larr; All tools</a>
       <h1>Resistor Divider Solver</h1>
       <p>Divide a high voltage down to comparator references with one string of identical unit resistors.
-         Enter target and reference voltages, limit the string current or total resistance, and get unit counts, tap errors and a schematic.</p>
+         Use plain taps or taps with bypass switches, limit the string current or total resistance, and get unit counts, tap errors and a schematic.</p>
       <div class="dv-tags">
         <span class="tool-tag">Unit resistors</span>
         <span class="tool-tag">Multiple taps</span>
+        <span class="tool-tag">Switch bypass</span>
         <span class="tool-tag">Series / parallel</span>
       </div>
     </div>
@@ -102,7 +103,12 @@
           <h2 id="dv-schematic-heading">Divider schematic</h2>
           <span class="dv-live-label">Updates with inputs</span>
         </div>
-        <p class="hint" id="dv-schematic-help">Long series runs are marked ×n. Ru/p is p unit resistors in parallel; groups above four are shortened and labeled with the actual parallel count.</p>
+        <div class="mode-tabs" role="tablist" aria-label="Divider topology">
+          <button class="btn-add mode-tab" type="button" role="tab" data-topology="taps" aria-selected="true">Tapped string</button>
+          <button class="btn-add mode-tab" type="button" role="tab" data-topology="hybrid" aria-selected="false">Taps + switches</button>
+        </div>
+        <p class="hint" id="dv-mode-note" hidden></p>
+        <p class="hint" id="dv-schematic-help">Long series runs are marked ×n in series. Ru/p is p unit resistors in parallel; groups above four are shortened and labeled ×p parallel. Switch lanes on the right short the segments marked "shorted by"; only one switch is closed at a time. Each switch is labelled with its own one-bit select signal (SEL&lt;1&gt;, SEL&lt;2&gt;, …; plain SEL for a single switch) in a column beside its lane; bits run top to bottom, so the topmost switch has the highest bit. Each tap lists the full bus value that selects it. Hover a wire to highlight its net.</p>
         <div class="circuit-box" id="dv-schematic" role="region" aria-label="Divider schematic" aria-describedby="dv-schematic-help">
           <p class="dv-placeholder">Loading schematic…</p>
         </div>
@@ -124,7 +130,7 @@
         <div class="dv-table-wrap">
           <table class="dv-table dv-solutions">
             <thead>
-              <tr><th scope="col">Select</th><th scope="col">Unit resistors</th><th scope="col">Total resistance</th><th scope="col">String current</th><th scope="col">Max trip error</th></tr>
+              <tr><th scope="col">Select</th><th scope="col">Unit resistors</th><th scope="col">Switches</th><th scope="col">Total resistance</th><th scope="col">String current</th><th scope="col">Max trip error</th></tr>
             </thead>
             <tbody id="dv-solutions"></tbody>
           </table>
@@ -136,7 +142,7 @@
         <div class="dv-table-wrap">
           <table class="dv-table">
             <thead>
-              <tr><th scope="col">Tap</th><th scope="col">Target</th><th scope="col">Reference</th><th scope="col">Required k</th><th scope="col">Achieved k</th><th scope="col">Actual trip voltage</th><th scope="col">Error</th><th scope="col">Current at trip</th></tr>
+              <tr><th scope="col">Tap</th><th scope="col">Target</th><th scope="col">Reference</th><th scope="col">Required k</th><th scope="col">Achieved k</th><th scope="col">Actual trip voltage</th><th scope="col">Error</th><th scope="col">Current at trip</th><th scope="col">Bypass switch</th><th scope="col">Select code</th></tr>
             </thead>
             <tbody id="dv-tap-results"></tbody>
           </table>
@@ -145,7 +151,7 @@
         <div class="dv-table-wrap">
           <table class="dv-table">
             <thead>
-              <tr><th scope="col">Segment</th><th scope="col">Between</th><th scope="col">Value</th><th scope="col">Arrangement</th><th scope="col">Unit resistors</th><th scope="col">Resistance</th></tr>
+              <tr><th scope="col">Segment</th><th scope="col">Between</th><th scope="col">Value</th><th scope="col">Arrangement</th><th scope="col">Unit resistors</th><th scope="col">Resistance</th><th scope="col">Bypassed by</th></tr>
             </thead>
             <tbody id="dv-segments"></tbody>
           </table>
@@ -157,9 +163,11 @@
       <h2 id="dv-notes-heading">How it works</h2>
       <ul class="dv-notes">
         <li>Each tap is placed so that the resistance below it divided by the total resistance is as close as possible to k = VREF / VTARGET.</li>
+        <li>With switches, one tap is taken straight out and every other tap closes a switch that shorts a block below it, so its ratio comes from fewer unit resistors; the solver picks which tap stays plain. Switches sit at the tap or below it — never next to VIN, which may be a high-voltage node.</li>
+        <li>Only one switch is closed at a time, selected by a one-hot SEL bus: with w switches, the bus is SEL&lt;w:1&gt; (or plain SEL for one switch), each switch is driven by one bit shown to its right, and each tap lists the full bus code that selects it. Each switch state changes the total resistance, so the solver accepts a solution only if every state stays inside the allowed resistance range.</li>
         <li>Every segment uses identical unit resistors Ru: n in series, plus optional series groups of p units in parallel (Ru/p each).</li>
         <li>The trip error is the relative shift of the actual trip voltage VREF / k from the target voltage.</li>
-        <li>Among the solutions found within the tolerance, the one with the fewest unit resistors is selected first.</li>
+        <li>Among the solutions found within the tolerance, the one with the fewest unit resistors is selected first, then the one with the fewest switches.</li>
         <li>The search uses nearby tap positions, sampled total resistances up to 2000 Ru and bounded combinations of parallel groups. It does not enumerate every series / parallel network or guarantee a global optimum.</li>
         <li>Comparator input current, resistor mismatch, voltage and temperature coefficients and contact or wiring resistance are not included.</li>
       </ul>

@@ -4,7 +4,9 @@
   const byId = id => document.getElementById(id);
   const ui = {
     taps: byId('dv-taps'), addTap: byId('dv-add-tap'),
-    tabs: Array.from(document.querySelectorAll('.divider-page .mode-tab')),
+    tabs: Array.from(document.querySelectorAll('.divider-page .mode-tab[data-mode]')),
+    topologyTabs: Array.from(document.querySelectorAll('.divider-page [data-topology]')),
+    modeNote: byId('dv-mode-note'),
     currentFields: byId('dv-current-fields'), resistanceFields: byId('dv-resistance-fields'),
     iMin: byId('dv-i-min'), iMax: byId('dv-i-max'), iUnit: byId('dv-i-unit'),
     vMin: byId('dv-v-min'), vMax: byId('dv-v-max'),
@@ -22,6 +24,7 @@
   const drawer = window.ICDividerSchematic;
   const fmt = (value, unit) => core.formatValue(value, unit);
   let mode = 'current';
+  let topology = 'taps';
   let result = null;
   let selected = -1;
   let timer = 0;
@@ -71,21 +74,36 @@
   function renumber() {
     const rows = Array.from(ui.taps.rows);
     rows.forEach((row, i) => {
-      row.querySelector('th').textContent = 'TAP' + (i + 1);
+      const name = row.querySelector('.dv-tap-name');
+      if (name && !name.dataset.custom) name.value = 'TAP' + (i + 1);
       row.querySelector('button').disabled = rows.length === 1;
     });
     ui.addTap.disabled = rows.length >= core.MAX_TAPS;
   }
 
   function updateRowRatio(row) {
-    const [trip, ref] = row.querySelectorAll('input');
+    const [trip, ref] = row.querySelectorAll('input[type="number"]');
     const vt = number(trip), vr = number(ref);
     row.querySelector('output').textContent = vt > 0 && vr > 0 && vr < vt ? ratioText(vr / vt) : '—';
   }
 
   function addTap(vTrip, vRef) {
     const row = element('tr');
-    row.append(element('th'));
+    const head = element('th');
+    const name = element('input', 'dv-tap-name');
+    name.type = 'text';
+    name.maxLength = 16;
+    name.value = 'TAP' + (ui.taps.rows.length + 1);
+    name.setAttribute('aria-label', 'Tap name');
+    name.addEventListener('input', () => { name.dataset.custom = '1'; schedule(); });
+    name.addEventListener('change', () => {
+      if (name.value.trim()) return;
+      delete name.dataset.custom;
+      renumber();
+      schedule();
+    });
+    head.append(name);
+    row.append(head);
     [['Target voltage', vTrip], ['Reference voltage', vRef]].forEach(([label, value]) => {
       const cell = element('td');
       const input = element('input');
@@ -114,6 +132,17 @@
     ui.tabs.forEach(tab => tab.setAttribute('aria-selected', String(tab.dataset.mode === mode)));
     ui.currentFields.hidden = mode !== 'current';
     ui.resistanceFields.hidden = mode !== 'resistance';
+  }
+
+  const topologyNotes = {
+    hybrid: 'One tap is taken straight out with no switch closed; every other tap closes its own switch. The solver picks which tap stays plain, minimizing unit resistors first and switches second. Only one switch is closed at a time.'
+  };
+
+  function setTopology(next) {
+    topology = ['taps', 'hybrid'].includes(next) ? next : 'taps';
+    ui.topologyTabs.forEach(tab => tab.setAttribute('aria-selected', String(tab.dataset.topology === topology)));
+    ui.modeNote.hidden = topology === 'taps';
+    ui.modeNote.textContent = topologyNotes[topology] || '';
   }
 
   function updateVoltageDefaults() {
@@ -174,10 +203,10 @@
   function readInput() {
     let valid = true;
     const taps = Array.from(ui.taps.rows).map(row => {
-      const [trip, ref] = row.querySelectorAll('input');
+      const [trip, ref] = row.querySelectorAll('input[type="number"]');
       const vTrip = positive(trip), vRef = positive(ref);
       if (!(vTrip > 0 && vRef > 0)) valid = false;
-      return { vTrip, vRef };
+      return { name: row.querySelector('.dv-tap-name').value.trim(), vTrip, vRef };
     });
     const pair = mode === 'current' ? [ui.iMin, ui.iMax, ui.iUnit] : [ui.rMin, ui.rMax, ui.rUnit];
     [ui.iMin, ui.iMax, ui.rMin, ui.rMax].forEach(input => { if (!pair.includes(input)) mark(input, true); });
@@ -191,7 +220,7 @@
     const tolRaw = number(ui.tol);
     const tolerance = mark(ui.tol, Number.isFinite(tolRaw) && tolRaw >= 0 && tolRaw < 100) ? tolRaw / 100 : NaN;
     if (!(min > 0 && max > 0 && unit > 0 && tolerance >= 0)) valid = false;
-    return valid ? { taps, constraint: { mode, min, max, vMin, vMax }, unit, maxParallel, tolerance } : null;
+    return valid ? { taps, constraint: { mode, min, max, vMin, vMax }, unit, maxParallel, tolerance, topology } : null;
   }
 
   function clearOutput() {
@@ -231,23 +260,34 @@
       row.classList.toggle('selected', i === index);
       row.querySelector('input').checked = i === index;
     });
-    ui.summary.replaceChildren(
+    const chips = [
       chip('Unit resistors', s.units),
       chip('Total resistance', fmt(s.totalR, 'Ω') + ' = ' + Number(s.totalUnits.toPrecision(10)) + ' Ru'),
       chip('String current', rangeText(s.currentMin, s.current, 'A') + ' @ ' + rangeText(result.vMin, result.vMax, 'V')),
       chip('Power', fmt(s.power, 'W') + ' @ ' + fmt(result.vMax, 'V')),
       chip('Max trip error', errorText(s.maxError))
-    );
+    ];
+    if (s.switchCount) {
+      chips.push(
+        chip('Bypass switches', s.switchCount),
+        chip('Switch select signals', s.switches.map(sw => sw.name + ' = ' + sw.selectSignal).join(', ')),
+        chip('Resistance across states', rangeText(s.totalRMin, s.totalRMax, 'Ω'))
+      );
+    }
+    ui.summary.replaceChildren(...chips);
     ui.tapResults.replaceChildren(...s.taps.map(tap => {
       const row = element('tr');
       row.append(element('th', '', tap.name));
       return cells(row, [fmt(tap.vTrip, 'V'), fmt(tap.vRef, 'V'), ratioText(tap.ratio),
-        tap.num + '/' + tap.den + ' = ' + ratioText(tap.achieved), fmt(tap.tripActual, 'V'), errorText(tap.error), fmt(tap.currentAtTrip, 'A')]);
+        tap.num + '/' + tap.den + ' = ' + ratioText(tap.achieved), fmt(tap.tripActual, 'V'), errorText(tap.error), fmt(tap.currentAtTrip, 'A'),
+        tap.switch ? tap.switch.name + ': ' + tap.switch.from + ' → ' + tap.switch.to + ' · ' + fmt(tap.switch.effectiveR, 'Ω') : '—',
+        tap.selectCode ? s.selectBus + ' = ' + tap.selectCode : '—']);
     }));
     ui.segments.replaceChildren(...s.segments.map(segment => {
       const row = element('tr');
       row.append(element('th', '', segment.name));
-      return cells(row, [segment.top + ' – ' + segment.bottom, segment.composition, arrangement(segment), segment.units, fmt(segment.resistance, 'Ω')]);
+      return cells(row, [segment.top + ' – ' + segment.bottom, segment.composition, arrangement(segment), segment.units, fmt(segment.resistance, 'Ω'),
+        segment.bypass ? segment.bypass.join(', ') : '—']);
     }));
     try {
       const rendered = drawer.render(s, false, fmt);
@@ -310,11 +350,11 @@
       cell.append(label);
       row.append(cell);
       row.addEventListener('click', event => { if (!event.target.closest('label')) { radio.checked = true; showSolution(i); } });
-      return cells(row, [s.units, fmt(s.totalR, 'Ω'), rangeText(s.currentMin, s.current, 'A'), errorText(s.maxError)]);
+      return cells(row, [s.units, s.switchCount, fmt(s.totalR, 'Ω'), rangeText(s.currentMin, s.current, 'A'), errorText(s.maxError)]);
     }));
     ui.output.hidden = false;
     status(solved.withinTolerance
-      ? 'Updated automatically. Solutions found within the trip voltage tolerance are listed by unit resistor count.'
+      ? 'Updated automatically. Solutions found within the trip voltage tolerance are listed by unit resistor count, then by switch count.'
       : 'No solution was found within the trip voltage tolerance. The most accurate solutions found are listed instead.', solved.withinTolerance ? 'valid' : 'warning');
     showSolution(solved.selected);
   }
@@ -367,7 +407,7 @@
       const s = result.solutions[selected];
       const rendered = drawer.render(s, true, fmt);
       const blob = format === 'png' ? await toPng(rendered) : new Blob([rendered.svg], { type: 'image/svg+xml;charset=utf-8' });
-      saveBlob(blob, 'resistor-divider-' + s.units + 'u.' + format);
+      saveBlob(blob, 'resistor-divider-' + s.units + 'u' + (s.switchCount ? '-' + s.switchCount + 'sw' : '') + '.' + format);
       ui.downloadStatus.textContent = label + ' download requested. The export uses a white background.';
     } catch (error) {
       ui.downloadStatus.textContent = label + ' download could not be prepared. Please try again.';
@@ -381,14 +421,33 @@
     return;
   }
 
+  function bindSchematicHover() {
+    const highlight = target => {
+      const svg = ui.schematic.querySelector('svg');
+      if (!svg) return;
+      const item = target instanceof Element ? target.closest('[data-hit], [data-net]') : null;
+      const net = item && svg.contains(item) ? item.dataset.hit || item.dataset.net : null;
+      svg.querySelectorAll('.net-active').forEach(el => el.classList.remove('net-active'));
+      if (net) svg.querySelectorAll('[data-net]').forEach(el => {
+        if (el.dataset.net === net) el.classList.add('net-active');
+      });
+    };
+    ui.schematic.addEventListener('pointerover', event => highlight(event.target));
+    ui.schematic.addEventListener('pointerout', event => highlight(event.relatedTarget));
+    ui.schematic.addEventListener('pointerleave', () => highlight(null));
+  }
+
   [[5, 1.2], [4, 1.2]].forEach(([vt, vr]) => addTap(vt, vr));
+  bindSchematicHover();
   ui.addTap.addEventListener('click', () => {
     const rows = ui.taps.rows;
-    addTap('', rows.length ? rows[rows.length - 1].querySelectorAll('input')[1].value : '');
-    ui.taps.rows[ui.taps.rows.length - 1].querySelector('input').focus();
+    const numbers = rows.length ? rows[rows.length - 1].querySelectorAll('input[type="number"]') : [];
+    addTap('', numbers.length ? numbers[1].value : '');
+    ui.taps.rows[ui.taps.rows.length - 1].querySelector('input[type="number"]').focus();
     schedule();
   });
   ui.tabs.forEach(tab => tab.addEventListener('click', () => { setMode(tab.dataset.mode); solveNow(); }));
+  ui.topologyTabs.forEach(tab => tab.addEventListener('click', () => { setTopology(tab.dataset.topology); solveNow(); }));
   document.querySelector('.dv-inputs').addEventListener('input', event => {
     if (event.target === ui.vMin || event.target === ui.vMax) editedVoltageLimits.add(event.target);
     if ([ui.iMin, ui.iMax, ui.iUnit].includes(event.target)) driver = 'current';
@@ -399,5 +458,6 @@
   ui.downloadSvg.addEventListener('click', () => download('svg'));
   ui.downloadPng.addEventListener('click', () => download('png'));
   setMode('current');
+  setTopology('taps');
   solveNow();
 })();

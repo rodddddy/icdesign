@@ -249,6 +249,10 @@ test('one hundred parallel branches collapse without expanding the canvas', () =
     assert.doesNotMatch(svg, /\b(?:NaN|Infinity|undefined)\b/);
     const paths = Array.from(svg.matchAll(/<polyline[^>]*points="([^"]+)"/g));
     assert.equal(paths.filter(match => match[1].split(' ').length === 10).length, 4);
+    const rails = svg.match(/<g data-parallel="100">[\s\S]*?<\/g>/)[0];
+    const junctionXs = Array.from(rails.matchAll(/<circle cx="(-?\d+(?:\.\d+)?)"[^>]*r="2\.6"/g), match => Number(match[1]));
+    assert.deepEqual([...new Set(junctionXs)].sort((a, b) => a - b), [166, 176],
+      'outer rail ends are corners; only inner branches and the centre feed are three-way junctions');
     for (const path of paths) {
       for (const point of path[1].split(' ')) {
         const [x, y] = point.split(',').map(Number);
@@ -287,3 +291,280 @@ test('schematic renders taps, segments and collapsed runs safely', () => {
   }
   assert.throws(() => render(null));
 });
+
+const example = (topology) => ({
+  taps: [{ vTrip: 1, vRef: 0.3 }, { vTrip: 1, vRef: 0.24 }],
+  constraint: { mode: 'resistance', min: 1.2e6, max: 6e6 },
+  unit: 1e5, maxParallel: 1, tolerance: 0.001, topology
+});
+
+function checkStates(result) {
+  for (const s of result.solutions) {
+    assert.equal(s.units, s.segments.reduce((total, g) => total + g.units, 0));
+    const sum = s.segments.reduce((total, g) => total + g.value, 0);
+    assert.ok(Math.abs(sum - s.totalUnits) < 1e-9);
+    for (const [name, resistance] of [['string', s.totalR], ...s.switches.map(sw => [sw.name, sw.effectiveR])]) {
+      assert.ok(resistance >= result.rMin * (1 - 1e-9), name + ' resistance at least rMin');
+      assert.ok(resistance <= result.rMax * (1 + 1e-9), name + ' resistance at most rMax');
+    }
+    s.taps.forEach(tap => {
+      assert.ok(Math.abs(tap.tripActual - tap.vRef / tap.achieved) < 1e-9);
+      const stateR = tap.switch ? tap.switch.effectiveR : s.totalR;
+      assert.ok(Math.abs(tap.currentAtTrip - tap.tripActual / stateR) < 1e-12);
+      assert.ok(Math.abs(tap.error) <= s.maxError + 1e-15);
+      if (tap.switch) {
+        const sw = tap.switch;
+        assert.equal(sw.to, tap.node);
+        assert.equal(sw.effectiveGrid, s.totalUnits * s.grid - sw.bypassGrid);
+        assert.ok(Math.abs(sw.effectiveR - sw.effectiveGrid / s.grid * s.unit) < 1e-6 * sw.effectiveR);
+        assert.ok(sw.gridFrom < sw.gridTo);
+        assert.ok(sw.bypassGrid > 0);
+        assert.ok(Math.abs(sw.bypassValue + sw.effectiveValue - s.totalUnits) < 1e-9);
+        const bypassed = s.segments.filter(g => g.bypass && g.bypass.includes(sw.name));
+        assert.deepEqual(sw.segments, bypassed.map(g => g.name));
+        assert.ok(Math.abs(bypassed.reduce((total, g) => total + g.value, 0) - sw.bypassValue) < 1e-9);
+      }
+    });
+  }
+}
+
+const switchedExample = {
+  taps: [{ vTrip: 1, vRef: 0.149 }, { vTrip: 1, vRef: 0.35 }, { vTrip: 1, vRef: 0.584 }],
+  constraint: { mode: 'resistance', min: 1.2e6, max: 6e6 },
+  unit: 1e5, maxParallel: 4, tolerance: 0.001, topology: 'hybrid'
+};
+
+test('two topologies trade unit resistors for switches', () => {
+  const taps = solve(example('taps')).solutions[0];
+  const hybrid = solve(example('hybrid')).solutions[0];
+  assert.equal(taps.units, 50);
+  assert.equal(taps.switchCount, 0);
+  assert.equal(hybrid.units, 25);
+  assert.equal(hybrid.switchCount, 1);
+  assert.equal(hybrid.maxError, 0);
+  assert.ok(hybrid.units < taps.units);
+});
+
+test('hybrid switch sits below its tap and shorts the block to the lower tap', () => {
+  const input = example('hybrid');
+  const r = solve(input);
+  const s = r.solutions[0];
+  const upper = s.taps[0], lower = s.taps[1];
+  assert.ok(upper.switch);
+  assert.equal(upper.switch.name, 'SW1');
+  assert.equal(upper.switch.gridTo, upper.switch.gridFrom + upper.switch.bypassGrid);
+  assert.equal(upper.switch.from, lower.node);
+  assert.equal(upper.switch.effectiveGrid, s.totalUnits * s.grid - upper.switch.bypassGrid);
+  assert.ok(Math.abs(upper.switch.effectiveGrid - 20) < 1e-12);
+  assert.equal(upper.switch.bypassGrid, 5);
+  assert.equal(upper.achieved, 0.3);
+  assert.equal(lower.achieved, 0.24);
+  assert.equal(upper.switch.to, upper.node);
+  assert.equal(upper.switch.gridTo, 11);
+  assert.equal(upper.switch.gridFrom, 6);
+  assert.equal(upper.switch.fromValue, 6);
+  assert.equal(upper.switch.toValue, 11);
+  assert.deepEqual(s.switches.map(sw => sw.segments), [['R2']]);
+  assert.deepEqual(s.segments[1].bypass, ['SW1']);
+  checkStates(r);
+});
+
+test('hybrid leaves exactly one tap plain and switches the rest', () => {
+  const r = solve(switchedExample);
+  const s = r.solutions[0];
+  assert.equal(s.taps.filter(tap => !tap.switch).length, 1);
+  assert.equal(s.taps.filter(tap => tap.switch).length, 2);
+  assert.equal(s.switchCount, s.taps.length - 1);
+  assert.ok(s.switches.every(sw => sw.to !== 'VIN'));
+  assert.ok(s.switches.every(sw => sw.gridTo < s.totalUnits * s.grid));
+  checkStates(r);
+  const twoTaps = solve(example('hybrid')).solutions[0];
+  assert.equal(twoTaps.taps.filter(tap => !tap.switch).length, 1);
+  assert.equal(twoTaps.switchCount, 1);
+});
+
+test('switch states stay inside the resistance range at every position', () => {
+  const input = {
+    taps: [{ vTrip: 5, vRef: 1.2 }, { vTrip: 4, vRef: 1.2 }, { vTrip: 10, vRef: 1.2 }],
+    constraint: { mode: 'current', min: 0.1e-6, max: 5e-6, vMin: 3.2, vMax: 12 },
+    unit: 1e6, maxParallel: 20, tolerance: 0.01
+  };
+  for (const topology of ['taps', 'hybrid']) {
+    const r = solve({ ...input, topology });
+    assert.deepEqual(r.errors, []);
+    assert.equal(r.topology, topology);
+    assert.equal(r.withinTolerance, true);
+    for (const s of r.solutions) {
+      assert.ok(s.totalRMin >= r.rMin * (1 - 1e-9));
+      assert.ok(s.totalRMax <= r.rMax * (1 + 1e-9));
+      assert.ok(s.totalRMin <= s.totalRMax);
+    }
+    checkStates(r);
+  }
+  const hybrid = solve({ ...input, topology: 'hybrid' }).solutions[0];
+  assert.equal(hybrid.taps.filter(tap => !tap.switch).length, 1);
+  assert.equal(hybrid.switchCount, hybrid.taps.length - 1);
+});
+
+test('solutions are ordered by units then by switch count', () => {
+  const r = solve({
+    taps: Array.from({ length: 5 }, (_, i) => ({ vTrip: 2 + i * 0.37, vRef: 1.2345 })),
+    constraint: { mode: 'resistance', min: 1e4, max: 1e8 }, unit: 1e3, maxParallel: 10, tolerance: 0.002, topology: 'hybrid'
+  });
+  assert.ok(r.solutions.length > 1);
+  for (let i = 1; i < r.solutions.length; i++) {
+    const a = r.solutions[i - 1], b = r.solutions[i];
+    assert.ok(a.units < b.units || (a.units === b.units && a.switchCount <= b.switchCount));
+  }
+});
+
+test('invalid topologies fall back to plain taps', () => {
+  for (const topology of ['unknown', 'switch']) {
+    const plain = solve(base({ topology }));
+    assert.equal(plain.topology, 'taps');
+    assert.deepEqual(plain.errors, []);
+  }
+});
+
+test('hybrid searches stay interactive', () => {
+  const input = {
+    taps: Array.from({ length: 8 }, (_, i) => ({ vTrip: 2 + i * 0.37, vRef: 1.2345 })),
+    constraint: { mode: 'resistance', min: 1e3, max: 1e9 }, unit: 1e3, maxParallel: 20, tolerance: 0.001
+  };
+  const started = Date.now();
+  const r = solve({ ...input, topology: 'hybrid' });
+  assert.ok(r.solutions.length > 0);
+  assert.ok(Date.now() - started < 3000, 'hybrid search must finish within three seconds');
+});
+
+test('one-hot select codes cover switches and taps', () => {
+  const twoSwitches = solve(switchedExample).solutions[0];
+  assert.equal(twoSwitches.selectWidth, twoSwitches.switchCount);
+  assert.equal(twoSwitches.selectBus, 'SEL<2:1>');
+  assert.deepEqual(twoSwitches.switches.map(sw => sw.selectSignal), ['SEL<2>', 'SEL<1>']);
+  assert.deepEqual(twoSwitches.switches.map(sw => sw.name), ['SW2', 'SW1'], 'the topmost switch takes the highest bit');
+  assert.deepEqual(twoSwitches.switches.map(sw => sw.selectCode), ['10', '01']);
+  for (const sw of twoSwitches.switches) assert.equal(sw.selectCode.split('1').length - 1, 1);
+  assert.equal(new Set(twoSwitches.switches.map(sw => sw.selectCode)).size, 2);
+  twoSwitches.taps.forEach(tap => assert.equal(tap.selectCode, tap.switch ? tap.switch.selectCode : '0'.repeat(2)));
+
+  const hybrid = solve(example('hybrid')).solutions[0];
+  assert.equal(hybrid.selectBus, 'SEL');
+  assert.equal(hybrid.switches[0].selectCode, '1');
+  assert.equal(hybrid.switches[0].selectSignal, 'SEL');
+  hybrid.taps.forEach(tap => assert.equal(tap.selectCode, tap.switch ? '1' : '0'));
+
+  const plain = solve(example('taps')).solutions[0];
+  assert.equal(plain.selectWidth, 0);
+  assert.equal(plain.selectBus, null);
+  plain.taps.forEach(tap => assert.equal(tap.selectCode, null));
+});
+
+test('tap names are editable, default numbered and kept unique', () => {
+  const input = {
+    taps: [{ name: '  VREF_HI ', vTrip: 5, vRef: 1.2 }, { name: 'VREF_LO', vTrip: 4, vRef: 1.2 }],
+    constraint: { mode: 'current', min: 0.1e-6, max: 5e-6, vMin: 3.2, vMax: 12 },
+    unit: 1e6, maxParallel: 20, tolerance: 0.01
+  };
+  const named = solve(input);
+  assert.deepEqual(named.errors, []);
+  const s = named.solutions[0];
+  assert.deepEqual(s.taps.map(tap => tap.name), ['VREF_HI', 'VREF_LO']);
+  assert.deepEqual(s.segments.map(segment => [segment.top, segment.bottom]), [['VIN', 'VREF_LO'], ['VREF_LO', 'VREF_HI'], ['VREF_HI', 'GND']]);
+  const svg = render(s, true, formatValue).svg;
+  assert.ok(svg.includes('>VREF_HI<'));
+  assert.ok(svg.includes('>VREF_LO<'));
+  assert.ok(!svg.includes('TAP1'), 'custom names replace the defaults');
+
+  const defaults = solve(base()).solutions[0];
+  assert.deepEqual(defaults.taps.map(tap => tap.name), ['TAP1', 'TAP2']);
+
+  const duplicates = solve({ ...input, taps: [{ name: 'A', vTrip: 5, vRef: 1.2 }, { name: 'A', vTrip: 4, vRef: 1.2 }] }).solutions[0];
+  assert.deepEqual(duplicates.taps.map(tap => tap.name), ['A', 'A 2'], 'duplicate names get a suffix');
+
+  const reserved = solve({ ...input, taps: [{ name: 'VIN', vTrip: 5, vRef: 1.2 }, { name: '  ', vTrip: 4, vRef: 1.2 }] }).solutions[0];
+  assert.deepEqual(reserved.taps.map(tap => tap.name), ['VIN 2', 'TAP2'], 'reserved node names and blanks fall back');
+
+  const hybrid = solve({ ...input, topology: 'hybrid' }).solutions[0];
+  for (const sw of hybrid.switches) {
+    assert.ok(['VREF_HI', 'VREF_LO'].includes(sw.to) || ['VREF_HI', 'VREF_LO'].includes(sw.from), 'switch terminals use the custom names');
+  }
+});
+
+test('schematic marks bypass switches, shorted segments and switch taps', () => {
+  const twoSwitches = solve(switchedExample).solutions[0];
+  const hybrid = solve(example('hybrid')).solutions[0];
+  const plain = solve(example('taps')).solutions[0];
+  const allowed = ['svg', 'title', 'desc', 'rect', 'g', 'polyline', 'circle', 'text', 'tspan'];
+
+  for (const [solution, switches] of [[twoSwitches, 2], [hybrid, 1], [plain, 0]]) {
+    for (const forDownload of [false, true]) {
+      const { svg, width, height } = render(solution, forDownload, formatValue);
+      assert.match(svg, /^<svg\s[\s\S]*<\/svg>$/);
+      assert.ok(svg.includes(`viewBox="0 0 ${width} ${height}"`));
+      assert.doesNotMatch(svg, /\b(?:NaN|Infinity|undefined)\b/);
+      assert.equal((svg.match(/data-switch=/g) || []).length, switches);
+      assert.equal((svg.match(/data-bypass=/g) || []).length, switches);
+      for (const [, name] of svg.matchAll(/<\/?([A-Za-z][\w:-]*)\b/g)) assert.ok(allowed.includes(name), name);
+    }
+  }
+
+  const switchSvg = render(twoSwitches, true, formatValue).svg;
+  assert.ok(switchSvg.includes('· 2 bypass switches'));
+  assert.equal((switchSvg.match(/data-tap=/g) || []).length, 3, 'only real taps draw a stub');
+  assert.ok(!switchSvg.includes('data-tap="N1"'), 'internal switch nodes are not tap stubs');
+  assert.ok(switchSvg.includes('data-switch="SW1"'));
+  assert.ok(switchSvg.includes('data-switch="SW2"'));
+  assert.ok(switchSvg.includes('shorted by SW1'));
+  assert.match(switchSvg, /SW1 shorts N\d+ to TAP\d+ \(/);
+  assert.ok(switchSvg.includes('SEL&lt;2:1&gt; = 01'));
+  assert.ok(switchSvg.includes('SEL&lt;2:1&gt; = 10'));
+  assert.ok(switchSvg.includes('SEL&lt;2:1&gt; = 00'), 'the plain tap shows the all-zero code');
+  assert.ok(!switchSvg.includes('SW1 · '), 'tap labels no longer name the switch');
+  assert.ok(!switchSvg.includes('SW2 · '), 'tap labels no longer name the switch');
+  assert.ok(switchSvg.includes('>SEL&lt;1&gt;<'), 'SW1 shows its single-bit control');
+  assert.ok(switchSvg.includes('>SEL&lt;2&gt;<'), 'SW2 shows its single-bit control');
+  assert.ok(switchSvg.includes('Closed when SEL&lt;1&gt; = 1'));
+  assert.ok(switchSvg.includes('Closed when SEL&lt;2&gt; = 1'));
+  assert.ok(switchSvg.includes('Each switch is driven by its own single select bit'));
+  assert.ok(!switchSvg.includes('equals the code to its right'));
+
+  const hybridSvg = render(hybrid, true, formatValue).svg;
+  assert.ok(hybridSvg.includes('· 1 bypass switch<'));
+  assert.ok(hybridSvg.includes('data-switch="SW1"'));
+  assert.ok(hybridSvg.includes('shorted by SW1'));
+  assert.ok(hybridSvg.includes('SEL = 1'));
+  assert.ok(!hybridSvg.includes('SW1 · '), 'tap labels no longer name the switch');
+  assert.ok(hybridSvg.includes('SEL = 0'), 'plain hybrid taps show the all-zero code');
+
+  const plainSvg = render(plain, true, formatValue).svg;
+  assert.ok(!plainSvg.includes('bypass'));
+  assert.ok(!plainSvg.includes('SEL'));
+});
+
+test('hover nets link tap wires to their switch terminal and select labels to the switch', () => {
+  const solution = solve(switchedExample).solutions[0];
+  const { svg } = render(solution, false, formatValue);
+  for (const sw of solution.switches) {
+    const net = 'SW:' + sw.name;
+    const group = svg.match(new RegExp('<g data-switch="' + sw.name + '"[\\s\\S]*?</g>'))[0];
+    assert.ok(group.includes('data-net="' + net + '"'), 'the switch symbol answers to its select net');
+    assert.equal((group.match(new RegExp('<circle[^>]*data-net="' + net + '"', 'g')) || []).length, 2,
+      'both switch terminals share the select net');
+    assert.match(group, /<polyline[^>]*stroke="#e2e8f0"[^>]*stroke-width="1.4"[^>]*data-net="SW:/,
+      'the blade itself shares the select net');
+    const nodeNets = Array.from(group.matchAll(/<polyline[^>]*data-net="(N\d+)"/g), match => match[1]);
+    assert.equal(nodeNets.length, 4, 'lane wires belong to the node nets on both sides of the switch');
+    assert.equal(new Set(nodeNets).size, 2, 'lane wires do not answer to the select net');
+    const junction = Array.from(group.matchAll(/<circle\b([^>]*)>/g), match => match[1])
+      .some(attrs => /r="2\.6"/.test(attrs) && /data-net="N\d+"/.test(attrs) && !/cx="176"/.test(attrs));
+    assert.ok(junction, 'a solid dot marks the tap row where the lane drops off');
+    const tap = solution.taps.find(item => item.switch && item.switch.name === sw.name);
+    if (tap) {
+      const stub = svg.match(new RegExp('<g data-tap="' + tap.node + '">[\\s\\S]*?</g>'))[0];
+      const stubNet = stub.match(/data-net="(N\d+)"/)[1];
+      assert.ok(nodeNets.includes(stubNet), 'hovering the tap wire also lights its switch lane segment');
+    }
+  }
+});
+

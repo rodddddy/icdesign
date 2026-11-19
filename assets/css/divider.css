@@ -29,6 +29,11 @@
 .divider-page .dv-live-label { color: var(--accent); font: 11px var(--mono); }
 .divider-page .circuit-box { width: 100%; max-height: 640px; overflow: auto; }
 .divider-page .circuit-box svg { display: block; width: var(--dv-svg-width); max-width: 100%; min-width: 0; height: auto; margin: 0 auto; }
+.divider-page .circuit-box svg polyline[data-hit] { pointer-events: stroke; }
+.divider-page .circuit-box svg polyline { pointer-events: stroke; }
+.divider-page .circuit-box svg .net-active { stroke: var(--accent); stroke-width: 2.6; }
+.divider-page .circuit-box svg circle[data-net].net-active { fill: var(--accent); stroke: var(--accent); }
+.divider-page .circuit-box svg text.net-active { fill: var(--accent); }
 .divider-page .dv-placeholder { margin: 0; padding: 32px 18px; color: var(--muted); font-size: 13px; }
 .divider-page .dv-toolbar { display: flex; align-items: center; flex-wrap: wrap; gap: 10px; margin-top: 14px; }
 .divider-page .dv-toolbar .hint { margin: 0; font-size: 11px; }
@@ -41,7 +46,15 @@
 .divider-page .dv-table thead th { background: var(--bg-soft); color: var(--muted); font: 600 12px var(--sans); }
 .divider-page .dv-table tbody th { color: var(--violet); font-weight: 600; }
 .divider-page .dv-tap-inputs td { padding: 6px; }
+.divider-page .dv-tap-inputs th { padding: 4px 6px; }
 .divider-page .dv-tap-inputs input[type="number"] { min-width: 80px; }
+.divider-page .dv-tap-name {
+  width: 88px; min-height: 30px; padding: 4px 6px;
+  border: 1px solid transparent; border-radius: 6px; background: transparent;
+  color: var(--violet); font: 600 13px var(--mono);
+}
+.divider-page .dv-tap-name:hover { border-color: var(--border-strong); }
+.divider-page .dv-tap-name:focus { border-color: var(--accent); background: var(--bg-soft); }
 .divider-page .dv-ratio { color: var(--accent); }
 .divider-page .btn-mini:disabled { opacity: 0.35; cursor: not-allowed; }
 .divider-page .dv-sr { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); }
