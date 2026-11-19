@@ -383,7 +383,8 @@
 
   [[5, 1.2], [4, 1.2]].forEach(([vt, vr]) => addTap(vt, vr));
   ui.addTap.addEventListener('click', () => {
-    addTap('', '');
+    const rows = ui.taps.rows;
+    addTap('', rows.length ? rows[rows.length - 1].querySelectorAll('input')[1].value : '');
     ui.taps.rows[ui.taps.rows.length - 1].querySelector('input').focus();
     schedule();
   });
