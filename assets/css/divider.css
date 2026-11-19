@@ -1,0 +1,93 @@
+.divider-page { color-scheme: dark; }
+.divider-page [hidden] { display: none !important; }
+.divider-page .wrap, .divider-page .panel { min-width: 0; }
+.divider-page .tool-header h1 { margin-top: 14px; }
+.divider-page .dv-tags { display: flex; flex-wrap: wrap; gap: 8px; }
+.divider-page .dv-tags .tool-tag { margin-top: 14px; }
+.divider-page .step-num { flex: none; }
+.divider-page :is(button, select, input, a, .circuit-box):focus-visible { outline: 2px solid var(--accent); outline-offset: 3px; }
+
+.divider-page input[type="number"], .divider-page select {
+  width: 100%; min-width: 0; min-height: 38px; padding: 8px 10px;
+  border: 1px solid var(--border-strong); border-radius: 8px;
+  background: var(--bg-soft); color: var(--text); font: 14px var(--mono);
+}
+.divider-page select { font-family: var(--sans); }
+.divider-page input[type="number"]:hover, .divider-page select:hover { border-color: var(--muted); }
+.divider-page input[type="number"]:focus, .divider-page select:focus { border-color: var(--accent); }
+.divider-page input.invalid { border-color: var(--danger); background: var(--danger-soft); }
+
+.divider-page .dv-workspace {
+  display: grid; grid-template-columns: minmax(0, 1.1fr) minmax(0, 1fr);
+  gap: 20px; align-items: start; margin: 22px 0;
+}
+.divider-page .dv-inputs { min-width: 0; }
+.divider-page .dv-inputs .panel:first-child { margin-top: 0; }
+.divider-page .dv-inputs .panel:last-child { margin-bottom: 0; }
+.divider-page .dv-preview { margin: 0; position: sticky; top: 74px; max-height: calc(100vh - 90px); overflow-y: auto; }
+.divider-page .dv-section-head { display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: 8px; }
+.divider-page .dv-live-label { color: var(--accent); font: 11px var(--mono); }
+.divider-page .circuit-box { width: 100%; max-height: 640px; overflow: auto; }
+.divider-page .circuit-box svg { display: block; width: var(--dv-svg-width); max-width: 100%; min-width: 0; height: auto; margin: 0 auto; }
+.divider-page .dv-placeholder { margin: 0; padding: 32px 18px; color: var(--muted); font-size: 13px; }
+.divider-page .dv-toolbar { display: flex; align-items: center; flex-wrap: wrap; gap: 10px; margin-top: 14px; }
+.divider-page .dv-toolbar .hint { margin: 0; font-size: 11px; }
+.divider-page .btn-add:disabled { opacity: 0.45; cursor: not-allowed; }
+
+.divider-page .dv-table-wrap { position: relative; overflow-x: auto; margin: 14px 0; border: 1px solid var(--border); border-radius: 10px; }
+.divider-page .dv-table { border-collapse: collapse; width: 100%; font: 13px var(--mono); }
+.divider-page .dv-table th, .divider-page .dv-table td { padding: 7px 10px; text-align: left; border-bottom: 1px solid var(--border); white-space: nowrap; }
+.divider-page .dv-table tbody tr:last-child > * { border-bottom: 0; }
+.divider-page .dv-table thead th { background: var(--bg-soft); color: var(--muted); font: 600 12px var(--sans); }
+.divider-page .dv-table tbody th { color: var(--violet); font-weight: 600; }
+.divider-page .dv-tap-inputs td { padding: 6px; }
+.divider-page .dv-tap-inputs input[type="number"] { min-width: 80px; }
+.divider-page .dv-ratio { color: var(--accent); }
+.divider-page .btn-mini:disabled { opacity: 0.35; cursor: not-allowed; }
+.divider-page .dv-sr { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); }
+
+.divider-page .dv-solutions tbody tr { cursor: pointer; }
+.divider-page .dv-solutions tbody tr:hover { background: var(--card-hover); }
+.divider-page .dv-solutions tbody tr.selected { background: var(--accent-soft); }
+.divider-page .dv-solutions tbody tr.selected td { color: var(--accent); }
+.divider-page .dv-pick { display: inline-flex; align-items: center; gap: 8px; cursor: pointer; }
+.divider-page .dv-pick input { margin: 0; accent-color: var(--accent); }
+
+.divider-page .dv-range, .divider-page .dv-settings { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 12px; margin-top: 14px; }
+.divider-page .dv-voltage-range { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+.divider-page .dv-field { min-width: 0; }
+.divider-page .dv-field > label { display: block; margin-bottom: 6px; color: var(--muted); font-size: 12px; font-weight: 600; }
+.divider-page .dv-with-unit { display: grid; grid-template-columns: minmax(0, 1fr) 72px; gap: 6px; }
+.divider-page .mode-tabs { flex-wrap: wrap; margin-bottom: 0; }
+.divider-page .dv-derived { margin: 14px 0 0; font-size: 13px; color: var(--muted); }
+.divider-page .dv-derived output { color: var(--accent); font-family: var(--mono); white-space: pre-wrap; }
+.divider-page .dv-settings { border-top: 1px solid var(--border); padding-top: 16px; margin-top: 16px; }
+
+.divider-page .dv-status {
+  border: 1px solid var(--border-strong); border-radius: 8px; padding: 11px 13px; margin: 16px 0 0;
+  color: var(--muted); background: var(--bg-soft); font-size: 12.5px; line-height: 1.6;
+}
+.divider-page .dv-status[data-state="valid"] { color: var(--accent); }
+.divider-page .dv-status[data-state="warning"] { color: var(--violet); border-color: rgba(167, 139, 250, 0.4); }
+.divider-page .dv-status[data-state="invalid"], .divider-page .dv-status[data-state="error"] {
+  border-color: rgba(248, 113, 113, 0.4); color: var(--danger); background: var(--danger-soft);
+}
+.divider-page .dv-errors { margin: 0; padding-left: 18px; }
+.divider-page .dv-warnings { border-left: 2px solid var(--violet); background: rgba(167, 139, 250, 0.06); padding: 10px 14px 10px 30px; font-size: 12px; line-height: 1.7; margin: 12px 0 0; }
+.divider-page .dv-subheading { font: 14px var(--mono); margin: 24px 0 6px; }
+.divider-page .stat-chip b { color: var(--accent); font-weight: 600; }
+.divider-page .stat-chip > span { color: var(--muted); }
+.divider-page .dv-notes { padding-left: 20px; margin: 12px 0 0; font-size: 12.5px; color: var(--muted); line-height: 1.8; }
+
+@media (max-width: 900px) {
+  .divider-page .dv-workspace { grid-template-columns: minmax(0, 1fr); }
+  .divider-page .dv-preview { position: static; max-height: none; }
+}
+@media (max-width: 600px) {
+  .divider-page .wrap { padding: 0 16px; }
+  .divider-page .topbar-inner { padding: 0 16px; gap: 12px; }
+  .divider-page .topnav { gap: 12px; font-size: 12px; }
+  .divider-page .tool-header h1 { font-size: 24px; }
+  .divider-page .panel { padding: 16px; }
+  .divider-page .dv-range, .divider-page .dv-settings { grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); }
+}

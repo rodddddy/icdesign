@@ -1,0 +1,172 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Resistor Divider Solver — ICDesign Lab</title>
+  <meta name="description" content="Turn target and reference voltages into a tapped resistor string built from one unit resistor, within a current or total-resistance limit, with series/parallel unit counts and a schematic.">
+  <link rel="stylesheet" href="../assets/css/style.css">
+  <link rel="stylesheet" href="../assets/css/divider.css">
+  <link rel="icon" href="data:image/svg+xml,&lt;svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'&gt;&lt;rect x='2' y='2' width='12' height='12' rx='2' fill='%2322d3ee'/&gt;&lt;/svg&gt;">
+  <script type="speculationrules">{"prerender":[{"where":{"href_matches":"/*"},"eagerness":"moderate"}]}</script>
+  <script src="../assets/js/divider-core.js" defer></script>
+  <script src="../assets/js/divider-schematic.js" defer></script>
+  <script src="../assets/js/divider-ui.js" defer></script>
+  <script src="../assets/js/i18n.js"></script>
+</head>
+<body class="divider-page">
+  <header class="topbar">
+    <div class="topbar-inner">
+      <a class="brand" href="/"><span class="chip-dot"></span>ICDesign Lab</a>
+      <nav class="topnav" aria-label="Main navigation">
+        <a href="/">Tools</a>
+        <a href="https://github.com/rodddddy/icdesign" target="_blank" rel="noopener">GitHub</a>
+        <button class="lang-toggle" id="lang-toggle" type="button" lang="zh-CN" title="切换到中文" aria-label="切换到中文" data-no-i18n>中文</button>
+      </nav>
+    </div>
+  </header>
+
+  <main class="wrap">
+    <div class="tool-header">
+      <a class="back-link" href="/">&larr; All tools</a>
+      <h1>Resistor Divider Solver</h1>
+      <p>Divide a high voltage down to comparator references with one string of identical unit resistors.
+         Enter target and reference voltages, limit the string current or total resistance, and get unit counts, tap errors and a schematic.</p>
+      <div class="dv-tags">
+        <span class="tool-tag">Unit resistors</span>
+        <span class="tool-tag">Multiple taps</span>
+        <span class="tool-tag">Series / parallel</span>
+      </div>
+    </div>
+
+    <noscript><p class="error-box">Enable JavaScript to solve the divider string.</p></noscript>
+
+    <div class="dv-workspace">
+      <div class="dv-inputs">
+        <section class="panel" aria-labelledby="dv-taps-heading">
+          <h2 id="dv-taps-heading"><span class="step-num">1</span>Taps</h2>
+          <p class="hint">Each tap reaches its reference voltage when the top of the string (VIN) is at the target voltage. Ratio k = VREF / VTARGET.</p>
+          <div class="dv-table-wrap">
+            <table class="dv-table dv-tap-inputs">
+              <thead>
+                <tr><th scope="col">Tap</th><th scope="col">Target (V)</th><th scope="col">Reference (V)</th><th scope="col">Ratio k</th><th scope="col"><span class="dv-sr">Remove</span></th></tr>
+              </thead>
+              <tbody id="dv-taps"></tbody>
+            </table>
+          </div>
+          <button class="btn-add" id="dv-add-tap" type="button">+ add tap</button>
+        </section>
+
+        <section class="panel" aria-labelledby="dv-limits-heading">
+          <h2 id="dv-limits-heading"><span class="step-num">2</span>String limits</h2>
+          <p class="hint">Limit the total resistance by:</p>
+          <div class="mode-tabs" role="tablist" aria-label="Total resistance limit">
+            <button class="btn-add mode-tab" type="button" role="tab" data-mode="current" aria-selected="true">String current</button>
+            <button class="btn-add mode-tab" type="button" role="tab" data-mode="resistance" aria-selected="false">Total resistance</button>
+          </div>
+          <div id="dv-current-fields">
+            <div class="dv-range dv-voltage-range">
+              <div class="dv-field"><label for="dv-v-min">Minimum VIN (V)</label><input type="number" id="dv-v-min" step="any" min="0" value="3.2"></div>
+              <div class="dv-field"><label for="dv-v-max">Maximum VIN (V)</label><input type="number" id="dv-v-max" step="any" min="0" value="6"></div>
+            </div>
+            <p class="hint">VIN defaults to 0.8 × the lowest target and 1.2 × the highest target. Each limit follows target edits until you override it.</p>
+            <div class="dv-range">
+              <div class="dv-field"><label for="dv-i-min">Minimum current</label><input type="number" id="dv-i-min" step="any" min="0" value="1"></div>
+              <div class="dv-field"><label for="dv-i-max">Maximum current</label><input type="number" id="dv-i-max" step="any" min="0" value="2"></div>
+              <div class="dv-field"><label for="dv-i-unit">Unit</label>
+                <select id="dv-i-unit"><option value="1e-9">nA</option><option value="1e-6" selected>µA</option><option value="1e-3">mA</option></select></div>
+            </div>
+          </div>
+          <div class="dv-range" id="dv-resistance-fields" hidden>
+            <div class="dv-field"><label for="dv-r-min">Minimum resistance</label><input type="number" id="dv-r-min" step="any" min="0" value="2.5"></div>
+            <div class="dv-field"><label for="dv-r-max">Maximum resistance</label><input type="number" id="dv-r-max" step="any" min="0" value="5"></div>
+            <div class="dv-field"><label for="dv-r-unit">Unit</label>
+              <select id="dv-r-unit"><option value="1">Ω</option><option value="1e3">kΩ</option><option value="1e6" selected>MΩ</option></select></div>
+          </div>
+          <p class="dv-derived"><span>Allowed total resistance</span> <output id="dv-range">—</output></p>
+          <p class="hint" id="dv-current-note">RMIN = VINMAX / IMAX; RMAX = VINMIN / IMIN. The current limits must hold over the entire VIN operating range.</p>
+          <div class="dv-settings">
+            <div class="dv-field dv-unit-field"><label for="dv-ru">Unit resistor Ru</label>
+              <div class="dv-with-unit"><input type="number" id="dv-ru" step="any" min="0" value="100">
+                <select id="dv-ru-unit" aria-label="Unit resistor unit"><option value="1">Ω</option><option value="1e3" selected>kΩ</option><option value="1e6">MΩ</option></select></div></div>
+            <div class="dv-field"><label for="dv-parallel">Max units in parallel</label>
+              <input type="number" id="dv-parallel" step="1" min="1" max="100" value="20"></div>
+            <div class="dv-field"><label for="dv-tol">Trip voltage tolerance (%)</label><input type="number" id="dv-tol" step="any" min="0" value="0.1"></div>
+          </div>
+        </section>
+      </div>
+
+      <section class="panel dv-preview" aria-labelledby="dv-schematic-heading">
+        <div class="dv-section-head">
+          <h2 id="dv-schematic-heading">Divider schematic</h2>
+          <span class="dv-live-label">Updates with inputs</span>
+        </div>
+        <p class="hint" id="dv-schematic-help">Long series runs are marked ×n. Ru/p is p unit resistors in parallel; groups above four are shortened and labeled with the actual parallel count.</p>
+        <div class="circuit-box" id="dv-schematic" role="region" aria-label="Divider schematic" aria-describedby="dv-schematic-help">
+          <p class="dv-placeholder">Loading schematic…</p>
+        </div>
+        <div class="dv-toolbar">
+          <button class="btn-add" id="dv-download-svg" type="button" disabled>Download SVG</button>
+          <button class="btn-add" id="dv-download-png" type="button" disabled>Download PNG</button>
+          <span class="hint">White background</span>
+        </div>
+        <p class="hint" id="dv-download-status" role="status" aria-live="polite"></p>
+      </section>
+    </div>
+
+    <section class="panel" id="dv-results" aria-labelledby="dv-results-heading">
+      <h2 id="dv-results-heading"><span class="step-num">3</span>Solutions</h2>
+      <div class="dv-status" id="dv-status" role="status" aria-live="polite">Loading the solver…</div>
+      <ul class="dv-warnings" id="dv-warnings" hidden></ul>
+      <div id="dv-output" hidden>
+        <p class="hint">Each row needs more unit resistors than the one above only if it is more accurate. Select a row to draw it.</p>
+        <div class="dv-table-wrap">
+          <table class="dv-table dv-solutions">
+            <thead>
+              <tr><th scope="col">Select</th><th scope="col">Unit resistors</th><th scope="col">Total resistance</th><th scope="col">String current</th><th scope="col">Max trip error</th></tr>
+            </thead>
+            <tbody id="dv-solutions"></tbody>
+          </table>
+        </div>
+
+        <h3 class="dv-subheading">Selected solution</h3>
+        <div class="stat-chips" id="dv-summary"></div>
+        <h3 class="dv-subheading">Taps</h3>
+        <div class="dv-table-wrap">
+          <table class="dv-table">
+            <thead>
+              <tr><th scope="col">Tap</th><th scope="col">Target</th><th scope="col">Reference</th><th scope="col">Required k</th><th scope="col">Achieved k</th><th scope="col">Actual trip voltage</th><th scope="col">Error</th><th scope="col">Current at trip</th></tr>
+            </thead>
+            <tbody id="dv-tap-results"></tbody>
+          </table>
+        </div>
+        <h3 class="dv-subheading">Segments, top to bottom</h3>
+        <div class="dv-table-wrap">
+          <table class="dv-table">
+            <thead>
+              <tr><th scope="col">Segment</th><th scope="col">Between</th><th scope="col">Value</th><th scope="col">Arrangement</th><th scope="col">Unit resistors</th><th scope="col">Resistance</th></tr>
+            </thead>
+            <tbody id="dv-segments"></tbody>
+          </table>
+        </div>
+      </div>
+    </section>
+
+    <section class="panel" aria-labelledby="dv-notes-heading">
+      <h2 id="dv-notes-heading">How it works</h2>
+      <ul class="dv-notes">
+        <li>Each tap is placed so that the resistance below it divided by the total resistance is as close as possible to k = VREF / VTARGET.</li>
+        <li>Every segment uses identical unit resistors Ru: n in series, plus optional series groups of p units in parallel (Ru/p each).</li>
+        <li>The trip error is the relative shift of the actual trip voltage VREF / k from the target voltage.</li>
+        <li>Among the solutions found within the tolerance, the one with the fewest unit resistors is selected first.</li>
+        <li>The search uses nearby tap positions, sampled total resistances up to 2000 Ru and bounded combinations of parallel groups. It does not enumerate every series / parallel network or guarantee a global optimum.</li>
+        <li>Comparator input current, resistor mismatch, voltage and temperature coefficients and contact or wiring resistance are not included.</li>
+      </ul>
+    </section>
+  </main>
+
+  <footer class="site-footer">
+    <div class="wrap">ICDesign Lab — static site deployed on Cloudflare Pages · source on GitHub</div>
+  </footer>
+</body>
+</html>
