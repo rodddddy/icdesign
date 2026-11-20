@@ -39,7 +39,26 @@
     const dot = (x, y, r = 2.6, color = colors.wire, net) => content.push(tag('circle', {
       cx: x, cy: y, r, fill: color, ...(net ? { 'data-net': net } : {})
     }));
-    const nodeNet = y => 'N' + y;
+    // A node is named by its row, but a lead wire joins two rows that belong to one
+    // electrical node (the last cell's base and the tap row). Union those rows so a
+    // hover lights the continuous wire instead of two separate islands.
+    const nodeAlias = new Map();
+    const findNode = value => {
+      let root = value;
+      while (nodeAlias.has(root) && nodeAlias.get(root) !== root) root = nodeAlias.get(root);
+      let current = value;
+      while (current !== root) {
+        const next = nodeAlias.get(current);
+        nodeAlias.set(current, root);
+        current = next;
+      }
+      return root;
+    };
+    const joinNode = (a, b) => {
+      const rootA = findNode(a), rootB = findNode(b);
+      if (rootA !== rootB) nodeAlias.set(Math.max(rootA, rootB), Math.min(rootA, rootB));
+    };
+    const nodeNet = y => 'N' + findNode(y);
     const richText = text => escape(text).replace(/R(u|\d+)/g, (_, sub) => 'R' + tag('tspan', { 'baseline-shift': 'sub', 'font-size': '72%' }, sub));
     // Conservative glyph widths keep labels inside the canvas without browser-only measurements.
     const textWidth = (value, size) => Array.from(String(value)).reduce((width, char) => width +
@@ -110,7 +129,9 @@
     const tapAnchors = [];
 
     solution.segments.forEach((segment, index) => {
-      content.push('<g ' + attr({ 'data-segment': segment.name }) + '><title>' + escape(segment.name + ': ' + segment.composition + ' = ' + format(segment.resistance, 'Ω')) + '</title>');
+      // No <title>: a native browser tooltip would cover the labels on hover.
+      // The visible text, the root aria-label and the <desc> carry the semantics.
+      content.push('<g ' + attr({ 'data-segment': segment.name }) + '>');
       const start = y, widest = halfWidth(segment), labelX = X - widest - 16;
       const runs = cellsFor(segment);
       const compositionLines = wrapText(segment.composition, labelX - 12, 11);
@@ -119,6 +140,12 @@
       const labelLines = [...compositionLines, ...seriesLines, ...parallelLines];
       const cellsHeight = runs.reduce((height, run) => height + run.cells.reduce((sum, kind) => sum + CELL[kind], 0), 0);
       const lead = LEAD + Math.max(0, (labelLines.length + 1) * 15 + 18 - cellsHeight - 2 * LEAD) / 2;
+      // The top and bottom leads are plain wire, so each pair of rows they span is
+      // one electrical node; alias them before the cells name their rows.
+      if (lead > 0) {
+        joinNode(start, start + lead);
+        joinNode(start + lead + cellsHeight, start + 2 * lead + cellsHeight);
+      }
       line([[X, y], [X, y + lead]], colors.wire, 1.4, nodeNet(y));
       y += lead;
       runs.forEach(run => {
@@ -129,8 +156,7 @@
             const collapsedParallel = run.parallel > 4;
             const half = parallelHalf(run.parallel);
             const topNet = nodeNet(y), bottomNet = nodeNet(y + CELL.P);
-            content.push('<g ' + attr({ 'data-parallel': run.parallel }) + '>' + (collapsedParallel
-              ? '<title>' + escape('×' + run.parallel + ' parallel: collapsed parallel branches; two left resistors, an ellipsis and one right resistor.') + '</title>' : ''));
+            content.push('<g ' + attr({ 'data-parallel': run.parallel }) + '>');
             line([[X, y], [X, y + 8]], colors.wire, 1.4, topNet);
             line([[X - half, y + 8], [X + half, y + 8]], colors.wire, 1.4, topNet);
             line([[X - half, y + 44], [X + half, y + 44]], colors.wire, 1.4, bottomNet);
@@ -162,12 +188,28 @@
       });
       line([[X, y], [X, y + lead]], colors.wire, 1.4, nodeNet(y + lead));
       y += lead;
+      // A vertical brace beside the label groups this segment's resistors between
+      // the node above and the node below, so neighbouring labels never overlap.
+      const braceX = labelX + 2, braceTop = start + 2, braceBottom = y - 2;
+      const mid = (braceTop + braceBottom) / 2, curve = Math.min(8, (braceBottom - braceTop) / 4);
+      const stemX = braceX + 5, endX = braceX + 10;
+      content.push(tag('path', {
+        d: 'M ' + endX + ' ' + braceTop
+          + ' Q ' + stemX + ' ' + braceTop + ' ' + stemX + ' ' + (braceTop + curve)
+          + ' L ' + stemX + ' ' + (mid - curve)
+          + ' Q ' + stemX + ' ' + mid + ' ' + braceX + ' ' + mid
+          + ' Q ' + stemX + ' ' + mid + ' ' + stemX + ' ' + (mid + curve)
+          + ' L ' + stemX + ' ' + (braceBottom - curve)
+          + ' Q ' + stemX + ' ' + braceBottom + ' ' + endX + ' ' + braceBottom,
+        fill: 'none', stroke: colors.muted, 'stroke-width': 1.2,
+        'stroke-linecap': 'round', 'stroke-linejoin': 'round', 'data-brace': segment.name
+      }));
       const middle = (start + y) / 2, labelOffset = (labelLines.length + 1) * 15 / 2;
       text(labelX, middle - labelOffset, segment.name, { anchor: 'end', italic: true, bold: true, size: 13 });
       labelLines.forEach((value, row) => text(labelX, middle - labelOffset + (row + 1) * 15, value, { anchor: 'end', color: colors.muted, size: 11 }));
       text(labelX, middle + labelOffset, format(segment.resistance, 'Ω'), { anchor: 'end', color: colors.muted, size: 11 });
       if (segment.bypass) {
-        content.push('<g ' + attr({ 'data-bypass': segment.bypass.join(' ') }) + '><title>' + escape(segment.name + ' is shorted by ' + segment.bypass.join(', ')) + '</title>');
+        content.push('<g ' + attr({ 'data-bypass': segment.bypass.join(' ') }) + '>');
         text(labelX, middle + labelOffset + 15, 'shorted by ' + segment.bypass.join(', '), { anchor: 'end', color: colors.device, size: 10 });
         content.push('</g>');
       }
@@ -201,11 +243,7 @@
     lanePlacements.forEach(({ sw, yTo, yFrom, sx, mid }) => {
       const net = 'SW:' + sw.name;
       const topNet = nodeNet(yTo), bottomNet = nodeNet(yFrom);
-      content.push('<g ' + attr({ 'data-switch': sw.name }) + '><title>'
-        + escape(sw.name + ' shorts ' + sw.from + ' to ' + sw.to + ' (' + sw.segments.join(' + ') + ', '
-          + format(sw.bypassResistance, 'Ω') + '). Effective string: ' + format(sw.effectiveValue * solution.unit, 'Ω')
-          + (sw.selectSignal ? '. Closed when ' + sw.selectSignal + ' = 1' : '') + '.')
-        + '</title>');
+      content.push('<g ' + attr({ 'data-switch': sw.name }) + '>');
       // The lane wires belong to the string nodes they connect; only the switch symbol
       // itself answers to the select net, so hovering a tap lights the whole node.
       line([[X, yTo], [sx, yTo]], colors.wire, 1.4, topNet);
@@ -282,7 +320,7 @@
       + (switchCount ? ' · ' + switchCount + ' bypass switch' + (switchCount === 1 ? '' : 'es') : '')
       + (hasCollapsedParallel ? ' · collapsed parallel branches' : '');
     const svg = '<svg ' + attr({ xmlns: 'http://www.w3.org/2000/svg', width: canvasWidth, height, viewBox: '0 0 ' + canvasWidth + ' ' + height, role: 'img', 'aria-label': title, 'font-family': FONT }) + '>'
-      + '<title>' + escape(title) + '</title><desc>' + escape('Ru is the unit resistor. Collapsed serial runs are marked ×n in series; Ru/p is p unit resistors in parallel. Groups above four use collapsed parallel branches: two left resistors, a horizontal ellipsis with no branch wire, and one right resistor, connected by top and bottom rails. The ×p parallel label gives the actual parallel count, separate from the serial ×n label. Labels sit to the left of the string so switch lanes on the right never cross them. Only real taps draw an output stub; internal nodes exist solely as switch terminals.'
+      + '<desc>' + escape('Ru is the unit resistor. Collapsed serial runs are marked ×n in series; Ru/p is p unit resistors in parallel. Groups above four use collapsed parallel branches: two left resistors, a horizontal ellipsis with no branch wire, and one right resistor, connected by top and bottom rails. The ×p parallel label gives the actual parallel count, separate from the serial ×n label. Labels sit to the left of the string so switch lanes on the right never cross them, and a curly brace beside each label brackets exactly the resistors of that segment. Only real taps draw an output stub; internal nodes exist solely as switch terminals.'
         + (switchCount ? ' Bypass switches short their highlighted segment; only one switch is closed at a time and the resulting string still meets the resistance range.'
           + (solution.selectBus ? ' Each switch is driven by its own single select bit and closes when that bit is 1. Select bits are numbered top to bottom, so the topmost switch carries the highest bit; its label sits in a column right of the switch lanes. The code under each tap is the full bus value that selects that tap.' : '') : '')
         + ' On the page, hovering a wire highlights its net.') + '</desc>'

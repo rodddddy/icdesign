@@ -387,6 +387,11 @@
   function solve(input) {
     const errors = [];
     const warnings = [];
+    // Each error and warning is tagged with the input area that produced it, so the
+    // UI can show it next to those inputs instead of only in the results area.
+    const errorTags = [];
+    const warningTags = [];
+    const fail = (tag, message) => { errors.push(message); errorTags.push(tag); };
     const rawTaps = Array.isArray(input && input.taps) ? input.taps : [];
     // Tap names are user-editable; fall back to TAP<n> and keep them unique so node
     // names in the solution stay unambiguous.
@@ -406,11 +411,16 @@
     const constraint = (input && input.constraint) || {};
     const topology = input && ['taps', 'hybrid'].includes(input.topology) ? input.topology : 'taps';
 
-    if (!taps.length) errors.push('Add at least one tap.');
-    if (taps.length > MAX_TAPS) errors.push('Use at most ' + MAX_TAPS + ' taps.');
+    // 'range' covers the VIN, current and resistance range settings; 'unit' covers
+    // the unit resistor, parallel limit and tolerance settings.
+    const tapsTag = { section: 'taps' };
+    const rangeTag = { section: 'range' };
+    const unitTag = { section: 'unit' };
+    if (!taps.length) fail(tapsTag, 'Add at least one tap.');
+    if (taps.length > MAX_TAPS) fail(tapsTag, 'Use at most ' + MAX_TAPS + ' taps.');
     taps.forEach((tap, i) => {
       if (!(tap.vRef > 0 && tap.vTrip > tap.vRef && Number.isFinite(tap.vTrip))) {
-        errors.push('Tap ' + (i + 1) + ': the reference voltage must be greater than 0 and lower than the target voltage.');
+        fail(tapsTag, 'Tap ' + (i + 1) + ': the reference voltage must be greater than 0 and lower than the target voltage.');
       }
     });
     const ratios = taps.map(tap => tap.vRef / tap.vTrip);
@@ -418,40 +428,43 @@
       for (let i = 0; i < taps.length; i++) {
         for (let j = i + 1; j < taps.length; j++) {
           if (Math.abs(ratios[i] - ratios[j]) <= 1e-9 * ratios[i]) {
-            errors.push('Taps ' + (i + 1) + ' and ' + (j + 1) + ' need the same division ratio. Remove one of them.');
+            fail(tapsTag, 'Taps ' + (i + 1) + ' and ' + (j + 1) + ' need the same division ratio. Remove one of them.');
           }
         }
       }
     }
-    if (!(unit > 0 && Number.isFinite(unit))) errors.push('The unit resistor must be greater than 0.');
-    if (!Number.isInteger(maxParallel) || maxParallel < 1 || maxParallel > 100) errors.push('Max units in parallel must be an integer from 1 to 100.');
-    if (!(tolerance >= 0 && tolerance < 1)) errors.push('The ratio tolerance must be from 0 to 100%.');
+    if (!(unit > 0 && Number.isFinite(unit))) fail(unitTag, 'The unit resistor must be greater than 0.');
+    if (!Number.isInteger(maxParallel) || maxParallel < 1 || maxParallel > 100) fail(unitTag, 'Max units in parallel must be an integer from 1 to 100.');
+    if (!(tolerance >= 0 && tolerance < 1)) fail(unitTag, 'The ratio tolerance must be from 0 to 100%.');
     const min = Number(constraint.min), max = Number(constraint.max);
-    if (!(min > 0 && max > 0 && Number.isFinite(max))) errors.push('Range limits must be greater than 0.');
-    else if (min > max) errors.push('The range minimum must not exceed the maximum.');
+    if (!(min > 0 && max > 0 && Number.isFinite(max))) fail(rangeTag, 'Range limits must be greater than 0.');
+    else if (min > max) fail(rangeTag, 'The range minimum must not exceed the maximum.');
     const byCurrent = constraint.mode === 'current';
     const useVin = byCurrent || constraint.vMin !== undefined || constraint.vMax !== undefined;
     const vMin = useVin ? Number(constraint.vMin) : Math.min(...taps.map(tap => tap.vTrip));
     const vMax = useVin ? Number(constraint.vMax) : Math.max(...taps.map(tap => tap.vTrip));
     if (useVin) {
-      if (!(vMin > 0 && vMax > 0 && Number.isFinite(vMax))) errors.push('VIN operating voltages must be greater than 0.');
-      else if (vMin > vMax) errors.push('Minimum VIN must not exceed maximum VIN.');
+      if (!(vMin > 0 && vMax > 0 && Number.isFinite(vMax))) fail(rangeTag, 'VIN operating voltages must be greater than 0.');
+      else if (vMin > vMax) fail(rangeTag, 'Minimum VIN must not exceed maximum VIN.');
     }
-    if (errors.length) return { errors, warnings, solutions: [] };
+    if (errors.length) return { errors, errorTags, warnings, warningTags, solutions: [] };
 
     const rMin = byCurrent ? vMax / max : min;
     const rMax = byCurrent ? vMin / min : max;
     const tMin = rMin / unit, tMax = rMax / unit;
-    const base = { errors, warnings, solutions: [], vMin, vMax, rMin, rMax, tMin, tMax, maxParallel, topology };
+    const base = { errors, errorTags, warnings, warningTags, solutions: [], vMin, vMax, rMin, rMax, tMin, tMax, maxParallel, topology };
     if (rMin > rMax * (1 + EPS)) {
-      errors.push('No total resistance satisfies the current limits over this VIN range. Lower the minimum current, raise the maximum current, or narrow the voltage range.');
+      fail({ section: 'range', cause: 'current-conflict' }, 'No total resistance satisfies the current limits over this VIN range. Lower the minimum current, raise the maximum current, or narrow the voltage range.');
       return base;
     }
     if (tMin > MAX_UNITS) {
-      errors.push('The minimum total resistance needs more than ' + MAX_UNITS + ' unit resistors. Use a larger unit resistor or a lower resistance.');
+      fail(unitTag, 'The minimum total resistance needs more than ' + MAX_UNITS + ' unit resistors. Use a larger unit resistor or a lower resistance.');
       return base;
     }
-    if (tMax > MAX_UNITS) warnings.push('The search stops at a total of ' + MAX_UNITS + ' Ru; higher total resistances were not explored.');
+    if (tMax > MAX_UNITS) {
+      warnings.push('The search stops at a total of ' + MAX_UNITS + ' Ru; higher total resistances were not explored.');
+      warningTags.push(unitTag);
+    }
 
     const order = taps.map((_, i) => i).sort((a, b) => ratios[b] - ratios[a]);
     const context = { taps, order, ratios, unit, vMin, vMax, maxParallel };
@@ -503,7 +516,7 @@
       }
     }
     if (!pool.length) {
-      errors.push('No realizable string fits this total resistance range. Use a smaller unit resistor or widen the range.');
+      fail(unitTag, 'No realizable string fits this total resistance range. Use a smaller unit resistor or widen the range.');
       return base;
     }
 

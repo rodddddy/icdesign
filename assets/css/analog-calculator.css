@@ -106,6 +106,9 @@
   max-height: 578px;
   margin: 0 auto;
 }
+.analog-page .circuit-box svg polyline { pointer-events: stroke; }
+.analog-page .circuit-box svg .net-active { stroke: var(--accent); stroke-width: 2.6; }
+.analog-page .circuit-box svg circle[data-net].net-active { fill: var(--accent); stroke: var(--accent); }
 .analog-page .analog-placeholder { margin: 0; padding: 32px 18px; color: var(--muted); font-size: 13px; }
 .analog-page .analog-toolbar { display: flex; align-items: center; flex-wrap: wrap; gap: 10px; margin-top: 14px; }
 .analog-page .btn-add { min-height: 38px; max-width: 100%; white-space: normal; line-height: 1.5; }

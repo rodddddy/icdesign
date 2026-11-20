@@ -133,6 +133,32 @@ test('validation messages', () => {
   assert.equal(solve(base({ unit: 2e3 })).warnings.length, 1);
 });
 
+test('each solver error reports the input panel it belongs to', () => {
+  const tags = input => {
+    const r = solve(input);
+    assert.ok(r.errors.length > 0);
+    assert.equal(r.errorTags.length, r.errors.length);
+    return r.errorTags.map(tag => tag.section);
+  };
+  assert.deepEqual(tags(base({ taps: [{ vTrip: 1, vRef: 1.2 }] })), ['taps']);
+  assert.deepEqual(tags(base({ taps: [{ vTrip: 5, vRef: 0 }] })), ['taps']);
+  assert.deepEqual(tags(base({ taps: [{ vTrip: 5, vRef: 1 }, { vTrip: 2.5, vRef: 0.5 }] })), ['taps']);
+  assert.deepEqual(tags(base({ constraint: { mode: 'current', min: 3e-6, max: 2e-6, vMin: 5, vMax: 5 } })), ['range']);
+  assert.deepEqual(tags(base({ constraint: { mode: 'current', min: 1e-6, max: 2e-6, vMin: 6, vMax: 3.2 } })), ['range']);
+  assert.deepEqual(tags(base({ maxParallel: 0 })), ['unit']);
+  assert.deepEqual(tags(base({ unit: 1 })), ['unit']);
+  assert.deepEqual(tags(base({ unit: 1e7 })), ['unit']);
+  const conflict = solve(base({ constraint: { mode: 'current', min: 2e-6, max: 2e-6, vMin: 3.2, vMax: 6 } }));
+  assert.deepEqual(conflict.errorTags, [{ section: 'range', cause: 'current-conflict' }]);
+  const capped = solve(base({ unit: 2e3 }));
+  assert.equal(capped.warnings.length, 1);
+  assert.deepEqual(capped.warningTags, [{ section: 'unit' }]);
+  const ok = solve(base());
+  assert.deepEqual(ok.errors, []);
+  assert.deepEqual(ok.errorTags, []);
+  assert.deepEqual(ok.warningTags, []);
+});
+
 test('worst-case search stays fast', () => {
   const started = Date.now();
   const r = solve({
@@ -285,8 +311,19 @@ test('schematic renders taps, segments and collapsed runs safely', () => {
     assert.equal((svg.match(/data-tap=/g) || []).length, 2);
     assert.ok(svg.includes('×17'), 'long series run is collapsed');
     assert.ok(svg.includes('k = 6/25'));
+    const braces = Array.from(svg.matchAll(/<path[^>]*data-brace="([^"]+)"[^>]*>/g));
+    assert.deepEqual(braces.map(match => match[1]), s.segments.map(segment => segment.name),
+      'every segment gets one brace');
+    for (const [element] of braces) {
+      const coordinates = element.match(/ d="([^"]+)"/)[1].match(/-?\d+(?:\.\d+)?/g).map(Number);
+      for (let i = 0; i < coordinates.length; i += 2) {
+        assert.ok(coordinates[i] < 176, 'brace stays left of the string');
+        assert.ok(coordinates[i] >= 0 && coordinates[i] <= width);
+        assert.ok(coordinates[i + 1] >= 0 && coordinates[i + 1] <= height);
+      }
+    }
     for (const [, name] of svg.matchAll(/<\/?([A-Za-z][\w:-]*)\b/g)) {
-      assert.ok(['svg', 'title', 'desc', 'rect', 'g', 'polyline', 'circle', 'text', 'tspan'].includes(name), name);
+      assert.ok(['svg', 'desc', 'rect', 'g', 'path', 'polyline', 'circle', 'text', 'tspan'].includes(name), name);
     }
   }
   assert.throws(() => render(null));
@@ -495,7 +532,7 @@ test('schematic marks bypass switches, shorted segments and switch taps', () => 
   const twoSwitches = solve(switchedExample).solutions[0];
   const hybrid = solve(example('hybrid')).solutions[0];
   const plain = solve(example('taps')).solutions[0];
-  const allowed = ['svg', 'title', 'desc', 'rect', 'g', 'polyline', 'circle', 'text', 'tspan'];
+  const allowed = ['svg', 'desc', 'rect', 'g', 'path', 'polyline', 'circle', 'text', 'tspan'];
 
   for (const [solution, switches] of [[twoSwitches, 2], [hybrid, 1], [plain, 0]]) {
     for (const forDownload of [false, true]) {
@@ -505,6 +542,10 @@ test('schematic marks bypass switches, shorted segments and switch taps', () => 
       assert.doesNotMatch(svg, /\b(?:NaN|Infinity|undefined)\b/);
       assert.equal((svg.match(/data-switch=/g) || []).length, switches);
       assert.equal((svg.match(/data-bypass=/g) || []).length, switches);
+      // A <title> would make the browser float an opaque native tooltip over the
+      // labels while the pointer is on a wire; the root aria-label and <desc> carry
+      // the same wording for assistive tech without covering the drawing.
+      assert.ok(!svg.includes('<title'), 'no element may trigger a native tooltip');
       for (const [, name] of svg.matchAll(/<\/?([A-Za-z][\w:-]*)\b/g)) assert.ok(allowed.includes(name), name);
     }
   }
@@ -516,7 +557,6 @@ test('schematic marks bypass switches, shorted segments and switch taps', () => 
   assert.ok(switchSvg.includes('data-switch="SW1"'));
   assert.ok(switchSvg.includes('data-switch="SW2"'));
   assert.ok(switchSvg.includes('shorted by SW1'));
-  assert.match(switchSvg, /SW1 shorts N\d+ to TAP\d+ \(/);
   assert.ok(switchSvg.includes('SEL&lt;2:1&gt; = 01'));
   assert.ok(switchSvg.includes('SEL&lt;2:1&gt; = 10'));
   assert.ok(switchSvg.includes('SEL&lt;2:1&gt; = 00'), 'the plain tap shows the all-zero code');
@@ -524,13 +564,12 @@ test('schematic marks bypass switches, shorted segments and switch taps', () => 
   assert.ok(!switchSvg.includes('SW2 · '), 'tap labels no longer name the switch');
   assert.ok(switchSvg.includes('>SEL&lt;1&gt;<'), 'SW1 shows its single-bit control');
   assert.ok(switchSvg.includes('>SEL&lt;2&gt;<'), 'SW2 shows its single-bit control');
-  assert.ok(switchSvg.includes('Closed when SEL&lt;1&gt; = 1'));
-  assert.ok(switchSvg.includes('Closed when SEL&lt;2&gt; = 1'));
   assert.ok(switchSvg.includes('Each switch is driven by its own single select bit'));
+  assert.ok(switchSvg.includes('closes when that bit is 1'), 'the description keeps the select-bit polarity');
   assert.ok(!switchSvg.includes('equals the code to its right'));
 
   const hybridSvg = render(hybrid, true, formatValue).svg;
-  assert.ok(hybridSvg.includes('· 1 bypass switch<'));
+  assert.ok(hybridSvg.includes('· 1 bypass switch"'));
   assert.ok(hybridSvg.includes('data-switch="SW1"'));
   assert.ok(hybridSvg.includes('shorted by SW1'));
   assert.ok(hybridSvg.includes('SEL = 1'));

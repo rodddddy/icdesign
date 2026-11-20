@@ -513,6 +513,21 @@
   ui.parameters.addEventListener('input', event => {
     if (event.target.matches('input[data-param]')) calculate();
   });
+  // The listener lives on the container, so it keeps working when the schematic
+  // is re-rendered after a topology change.
+  const highlightNet = target => {
+    const svg = ui.schematic.querySelector('svg');
+    if (!svg) return;
+    const item = target instanceof Element ? target.closest('[data-hit], [data-net]') : null;
+    const net = item && svg.contains(item) ? item.dataset.hit || item.dataset.net : null;
+    svg.querySelectorAll('.net-active').forEach(node => node.classList.remove('net-active'));
+    if (net) svg.querySelectorAll('[data-net]').forEach(node => {
+      if (node.dataset.net === net) node.classList.add('net-active');
+    });
+  };
+  ui.schematic.addEventListener('pointerover', event => highlightNet(event.target));
+  ui.schematic.addEventListener('pointerout', event => highlightNet(event.relatedTarget));
+  ui.schematic.addEventListener('pointerleave', () => highlightNet(null));
   ui.reset.addEventListener('click', () => {
     if (!model) return;
     fields.forEach(({ input, parameter }) => { input.value = inputString(parameter.default / parameter.scale); });

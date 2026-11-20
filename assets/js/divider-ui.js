@@ -11,11 +11,13 @@
     iMin: byId('dv-i-min'), iMax: byId('dv-i-max'), iUnit: byId('dv-i-unit'),
     vMin: byId('dv-v-min'), vMax: byId('dv-v-max'),
     rMin: byId('dv-r-min'), rMax: byId('dv-r-max'), rUnit: byId('dv-r-unit'),
-    range: byId('dv-range'), limitWarning: byId('dv-limit-warning'),
-    ru: byId('dv-ru'), ruUnit: byId('dv-ru-unit'), parallel: byId('dv-parallel'), tol: byId('dv-tol'),
+    range: byId('dv-range'), rangeLabel: byId('dv-range-label'), rangeFormula: byId('dv-range-formula'),
+    limitWarning: byId('dv-limit-warning'),
+    tapNotes: byId('dv-tap-notes'), rangeNotes: byId('dv-range-notes'), unitNotes: byId('dv-unit-notes'),
+    ru: byId('dv-ru'), ruUnit: byId('dv-ru-unit'), parallel: byId('dv-parallel'), parallelWarning: byId('dv-parallel-warning'), tol: byId('dv-tol'),
     schematic: byId('dv-schematic'), downloadSvg: byId('dv-download-svg'), downloadPng: byId('dv-download-png'),
     downloadStatus: byId('dv-download-status'),
-    status: byId('dv-status'), warnings: byId('dv-warnings'), output: byId('dv-output'),
+    status: byId('dv-status'), output: byId('dv-output'),
     solutions: byId('dv-solutions'), summary: byId('dv-summary'), tapResults: byId('dv-tap-results'), segments: byId('dv-segments')
   };
   if (!ui.taps) return;
@@ -127,11 +129,24 @@
     renumber();
   }
 
+  const rangeNotes = {
+    current: {
+      label: 'Allowed total resistance',
+      formula: 'RMIN = VINMAX / IMAX; RMAX = VINMIN / IMIN. The current and resistance ranges stay in sync over the VIN range: editing one updates the other.'
+    },
+    resistance: {
+      label: 'Allowed string current',
+      formula: 'IMIN = VINMIN / RMAX; IMAX = VINMAX / RMIN. The current and resistance ranges stay in sync over the VIN range: editing one updates the other.'
+    }
+  };
+
   function setMode(next) {
     mode = next;
     ui.tabs.forEach(tab => tab.setAttribute('aria-selected', String(tab.dataset.mode === mode)));
     ui.currentFields.hidden = mode !== 'current';
     ui.resistanceFields.hidden = mode !== 'resistance';
+    ui.rangeLabel.textContent = rangeNotes[mode].label;
+    ui.rangeFormula.textContent = rangeNotes[mode].formula;
   }
 
   const topologyNotes = {
@@ -146,7 +161,7 @@
   }
 
   function updateVoltageDefaults() {
-    const targets = Array.from(ui.taps.rows).map(row => number(row.querySelector('input'))).filter(value => Number.isFinite(value) && value > 0);
+    const targets = Array.from(ui.taps.rows).map(row => number(row.querySelector('input[type="number"]'))).filter(value => Number.isFinite(value) && value > 0);
     if (!targets.length) return;
     if (!editedVoltageLimits.has(ui.vMin)) ui.vMin.value = Number((Math.min(...targets) * 0.8).toPrecision(12));
     if (!editedVoltageLimits.has(ui.vMax)) ui.vMax.value = Number((Math.max(...targets) * 1.2).toPrecision(12));
@@ -179,6 +194,11 @@
   }
 
   function showLimitWarning() {
+    if (mode !== 'current') {
+      ui.limitWarning.hidden = true;
+      ui.limitWarning.replaceChildren();
+      return false;
+    }
     const vMin = number(ui.vMin), vMax = number(ui.vMax);
     const iMin = scaled(ui.iMin, ui.iUnit), iMax = scaled(ui.iMax, ui.iUnit);
     const rMin = vMax / iMax, rMax = vMin / iMin;
@@ -202,10 +222,11 @@
 
   function readInput() {
     let valid = true;
+    const invalid = new Set();
     const taps = Array.from(ui.taps.rows).map(row => {
       const [trip, ref] = row.querySelectorAll('input[type="number"]');
       const vTrip = positive(trip), vRef = positive(ref);
-      if (!(vTrip > 0 && vRef > 0)) valid = false;
+      if (!(vTrip > 0 && vRef > 0)) { valid = false; invalid.add('taps'); }
       return { name: row.querySelector('.dv-tap-name').value.trim(), vTrip, vRef };
     });
     const pair = mode === 'current' ? [ui.iMin, ui.iMax, ui.iUnit] : [ui.rMin, ui.rMax, ui.rUnit];
@@ -214,21 +235,65 @@
     const min = positive(pair[0]) * scale, max = positive(pair[1]) * scale;
     const unit = positive(ui.ru) * Number(ui.ruUnit.value);
     const vMin = positive(ui.vMin), vMax = positive(ui.vMax);
-    if (!(vMin > 0 && vMax > 0)) valid = false;
+    if (!(vMin > 0 && vMax > 0)) { valid = false; invalid.add('range'); }
+    if (!(min > 0 && max > 0)) { valid = false; invalid.add('range'); }
+    if (!(unit > 0)) { valid = false; invalid.add('unit'); }
     const maxParallel = number(ui.parallel);
-    if (!mark(ui.parallel, Number.isInteger(maxParallel) && maxParallel >= 1 && maxParallel <= 100)) valid = false;
+    if (!mark(ui.parallel, Number.isInteger(maxParallel) && maxParallel >= 1 && maxParallel <= 100)) { valid = false; invalid.add('unit'); }
     const tolRaw = number(ui.tol);
     const tolerance = mark(ui.tol, Number.isFinite(tolRaw) && tolRaw >= 0 && tolRaw < 100) ? tolRaw / 100 : NaN;
-    if (!(min > 0 && max > 0 && unit > 0 && tolerance >= 0)) valid = false;
-    return valid ? { taps, constraint: { mode, min, max, vMin, vMax }, unit, maxParallel, tolerance, topology } : null;
+    if (!(tolerance >= 0)) { valid = false; invalid.add('unit'); }
+    return { input: valid ? { taps, constraint: { mode, min, max, vMin, vMax }, unit, maxParallel, tolerance, topology } : null, invalid };
+  }
+
+  function clearInputNotes() {
+    [ui.tapNotes, ui.rangeNotes, ui.unitNotes].forEach(box => {
+      box.hidden = true;
+      box.replaceChildren();
+    });
+  }
+
+  function paintNotes(box, items) {
+    box.hidden = !items.length;
+    box.replaceChildren();
+    if (!items.length) return;
+    const list = element('ul');
+    items.forEach(({ level, text }) => list.append(element('li', 'dv-note-' + level, text)));
+    box.append(list);
+  }
+
+  const inputErrorNotes = {
+    taps: 'Complete or correct the highlighted tap values. The reference voltage must be greater than 0 and lower than the target voltage.',
+    range: 'Complete or correct the highlighted range values. Voltages, currents and resistances must be greater than 0; the range minimum must not exceed the maximum.',
+    unit: 'Complete or correct the highlighted unit resistor settings. The unit resistor must be greater than 0; the parallel count must be an integer from 1 to 100; the trip voltage tolerance must be from 0 to below 100%.'
+  };
+
+  function showSolverNotes(solved, skipCurrentConflict) {
+    const notes = { taps: [], range: [], unit: [] };
+    (solved.errorTags || []).forEach((tag, i) => {
+      if (!tag || !notes[tag.section]) return;
+      if (skipCurrentConflict && tag.cause === 'current-conflict') return;
+      notes[tag.section].push({ level: 'error', text: solved.errors[i] });
+    });
+    (solved.warningTags || []).forEach((tag, i) => {
+      if (!tag || !notes[tag.section]) return;
+      notes[tag.section].push({ level: 'warning', text: solved.warnings[i] });
+    });
+    paintNotes(ui.tapNotes, notes.taps);
+    paintNotes(ui.rangeNotes, notes.range);
+    paintNotes(ui.unitNotes, notes.unit);
+  }
+
+  function showInvalidInputs(invalid) {
+    paintNotes(ui.tapNotes, invalid.has('taps') ? [{ level: 'error', text: inputErrorNotes.taps }] : []);
+    paintNotes(ui.rangeNotes, invalid.has('range') ? [{ level: 'error', text: inputErrorNotes.range }] : []);
+    paintNotes(ui.unitNotes, invalid.has('unit') ? [{ level: 'error', text: inputErrorNotes.unit }] : []);
   }
 
   function clearOutput() {
     result = null;
     selected = -1;
     ui.output.hidden = true;
-    ui.warnings.hidden = true;
-    ui.warnings.replaceChildren();
     ui.downloadSvg.disabled = true;
     ui.downloadPng.disabled = true;
     ui.downloadStatus.textContent = '';
@@ -307,12 +372,14 @@
     ui.taps.querySelectorAll('tr').forEach(updateRowRatio);
     updateVoltageDefaults();
     syncLimits();
-    const input = readInput();
-    showLimitWarning();
+    const { input, invalid } = readInput();
+    const conflict = showLimitWarning();
     clearOutput();
+    clearInputNotes();
     ui.range.textContent = '—';
     if (!input) {
-      status('Complete or correct the highlighted fields. Voltages, currents and resistances must be greater than 0; parallel count must be an integer from 1 to 100; trip voltage tolerance must be from 0 to below 100%.', 'invalid');
+      showInvalidInputs(invalid);
+      status('Fix the highlighted inputs under Taps and String limits.', 'invalid');
       placeholder('Waiting for valid inputs.');
       return;
     }
@@ -326,15 +393,13 @@
       return;
     }
     if (Number.isFinite(solved.rMin) && solved.rMin <= solved.rMax * (1 + 1e-9)) {
-      ui.range.textContent = fmt(solved.rMin, 'Ω') + ' – ' + fmt(solved.rMax, 'Ω') + '  (' + Number(solved.tMin.toPrecision(6)) + ' – ' + Number(solved.tMax.toPrecision(6)) + ' Ru)';
+      ui.range.textContent = mode === 'current'
+        ? fmt(solved.rMin, 'Ω') + ' – ' + fmt(solved.rMax, 'Ω') + '  (' + Number(solved.tMin.toPrecision(6)) + ' – ' + Number(solved.tMax.toPrecision(6)) + ' Ru)'
+        : fmt(solved.vMin / solved.rMax, 'A') + ' – ' + fmt(solved.vMax / solved.rMin, 'A');
     }
-    solved.warnings.forEach(text => ui.warnings.append(element('li', '', text)));
-    ui.warnings.hidden = !solved.warnings.length;
+    showSolverNotes(solved, conflict);
     if (solved.errors.length) {
-      const list = element('ul', 'dv-errors');
-      solved.errors.forEach(text => list.append(element('li', '', text)));
-      status('', 'error');
-      ui.status.replaceChildren(list);
+      status('Fix the highlighted inputs under Taps and String limits.', 'error');
       placeholder('No schematic.');
       return;
     }
@@ -455,6 +520,12 @@
     schedule();
   });
   document.querySelector('.dv-inputs').addEventListener('change', event => { if (event.target.tagName === 'SELECT') solveNow(); });
+  ui.parallelWarning.textContent = 'Max units in parallel is limited to 100; values above 100 are set to 100.';
+  ui.parallel.addEventListener('input', () => {
+    const clamped = number(ui.parallel) > 100;
+    if (clamped) ui.parallel.value = '100';
+    ui.parallelWarning.hidden = !clamped;
+  });
   ui.downloadSvg.addEventListener('click', () => download('svg'));
   ui.downloadPng.addEventListener('click', () => download('png'));
   setMode('current');

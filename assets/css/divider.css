@@ -33,7 +33,9 @@
 .divider-page .circuit-box svg polyline { pointer-events: stroke; }
 .divider-page .circuit-box svg .net-active { stroke: var(--accent); stroke-width: 2.6; }
 .divider-page .circuit-box svg circle[data-net].net-active { fill: var(--accent); stroke: var(--accent); }
-.divider-page .circuit-box svg text.net-active { fill: var(--accent); }
+/* Text keeps the plain glyph edges: the widened stroke above would fatten and blur
+   the letters until they are unreadable, so only the fill colour changes. */
+.divider-page .circuit-box svg text.net-active { fill: var(--accent); stroke: none; stroke-width: 0; }
 .divider-page .dv-placeholder { margin: 0; padding: 32px 18px; color: var(--muted); font-size: 13px; }
 .divider-page .dv-toolbar { display: flex; align-items: center; flex-wrap: wrap; gap: 10px; margin-top: 14px; }
 .divider-page .dv-toolbar .hint { margin: 0; font-size: 11px; }
@@ -90,8 +92,15 @@
 .divider-page .dv-status[data-state="invalid"], .divider-page .dv-status[data-state="error"] {
   border-color: rgba(248, 113, 113, 0.4); color: var(--danger); background: var(--danger-soft);
 }
-.divider-page .dv-errors { margin: 0; padding-left: 18px; }
-.divider-page .dv-warnings { border-left: 2px solid var(--violet); background: rgba(167, 139, 250, 0.06); padding: 10px 14px 10px 30px; font-size: 12px; line-height: 1.7; margin: 12px 0 0; }
+.divider-page .dv-input-notes {
+  margin: 14px 0 0; padding: 10px 13px; border: 1px solid var(--border-strong); border-radius: 8px;
+  background: var(--bg-soft); font-size: 12.5px; line-height: 1.6;
+}
+.divider-page .dv-input-notes ul { margin: 0; padding-left: 18px; }
+.divider-page .dv-input-notes .dv-note-error { color: var(--danger); }
+.divider-page .dv-input-notes .dv-note-warning { color: #fbbf24; }
+.divider-page .dv-field-warning { margin: 7px 0 0; color: #fbbf24; font-size: 11.5px; line-height: 1.5; }
+.divider-page .dv-settings .dv-settings-notes { grid-column: 1 / -1; margin-top: 0; }
 .divider-page .dv-subheading { font: 14px var(--mono); margin: 24px 0 6px; }
 .divider-page .stat-chip b { color: var(--accent); font-weight: 600; }
 .divider-page .stat-chip > span { color: var(--muted); }

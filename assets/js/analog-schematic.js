@@ -34,6 +34,8 @@
       : { bg: '#0d1322', wire: '#b8c6da', device: '#e2e8f0', text: '#e2e8f0' };
     const devices = [];
     const content = [];
+    const hitAreas = [];
+    let deviceDepth = 0;
     const Y = y => mirror ? height - y : y;
     const nodeName = name => mirror && name === 'VDD' ? 'VSS' : mirror && name === 'VSS' ? 'VDD' : name;
     const attr = values => Object.entries(values).map(([key, value]) => key + '="' + escape(value) + '"').join(' ');
@@ -49,16 +51,27 @@
         + '</text>');
     };
     const label = (x, y, text, anchor = 'start') => textScreen(x, Y(y), text, anchor);
-    const lineScreen = (points, color = colors.wire, net, strokeWidth = 1.4) => content.push(tag('polyline', {
-      points: points.map(point => point.join(',')).join(' '), fill: 'none', stroke: color, 'stroke-width': strokeWidth,
-      'stroke-linecap': 'square', 'stroke-linejoin': 'miter', ...(net ? { 'data-net': nodeName(net) } : {})
-    }));
+    const lineScreen = (points, color = colors.wire, net, strokeWidth = 1.4) => {
+      const shape = points.map(point => point.join(',')).join(' ');
+      content.push(tag('polyline', {
+        points: shape, fill: 'none', stroke: color, 'stroke-width': strokeWidth,
+        'stroke-linecap': 'square', 'stroke-linejoin': 'miter', ...(net ? { 'data-net': nodeName(net) } : {})
+      }));
+      // Device leads are short enough to hover directly; top-level routes get a
+      // transparent twin so their thin strokes are easy to pick with the pointer.
+      // Twins draw last so symbol strokes never cover a route's hit area.
+      if (net && !forDownload && deviceDepth === 0) hitAreas.push(tag('polyline', {
+        points: shape, fill: 'none', stroke: 'transparent', 'stroke-width': 10, 'data-hit': nodeName(net)
+      }));
+    };
     const wire = (points, net) => lineScreen(points.map(([x, y]) => [x, Y(y)]), colors.wire, net);
     const dot = (x, y, net) => content.push(tag('circle', { cx: x, cy: Y(y), r: 2.6, fill: colors.wire, 'data-net': nodeName(net) }));
     const addDevice = (name, description, kind, nodes) => {
       devices.push({ name, description, kind, nodes: Object.fromEntries(Object.entries(nodes).map(([pin, net]) => [pin, nodeName(net)])) });
       content.push('<g ' + attr({ 'data-device': name, 'data-kind': kind }) + '><title>' + escape(name + ' — ' + description) + '</title>');
+      deviceDepth++;
     };
+    const endDevice = () => { content.push('</g>'); deviceDepth--; };
     const ground = (x, sy, net) => [8, 5, 2].forEach((half, i) =>
       lineScreen([[x - half, sy + i * 4], [x + half, sy + i * 4]], colors.wire, net, 1.6));
     const supply = (net, y, xs, labelled = true) => {
@@ -74,8 +87,11 @@
       textScreen(xDot - 6, Y(y), biasNames[type][net] || net, 'end');
     };
     const terminal = (x, y, xEnd, name, place) => {
-      wire([[x, y], [xEnd, y]], name);
-      content.push(tag('circle', { cx: x, cy: Y(y), r: 3, fill: colors.bg, stroke: colors.wire, 'stroke-width': 1.4 }));
+      // The stub is the same electrical node as the internal out/vin route, so it
+      // shares that net for hover highlighting while the printed label stays vout.
+      const net = name.replace(/^vout(?=[+-]?$)/, 'out');
+      wire([[x, y], [xEnd, y]], net);
+      content.push(tag('circle', { cx: x, cy: Y(y), r: 3, fill: colors.bg, stroke: colors.wire, 'stroke-width': 1.4, 'data-net': nodeName(net) }));
       if (place === 'left') textScreen(x - 6, Y(y), name, 'end');
       else if (place === 'right') textScreen(x + 6, Y(y), name);
       else if (place) textScreen(x, Y(y) - 10, place === '+' ? '+' : '−', 'middle', 11);
@@ -99,7 +115,7 @@
       const dy = labelAt === 'center' ? 0 : (labelAt === 'source') === sourceTop ? -1 : 1;
       if (labelSide === 'lead') label(x - side * 6, y + dy * 16, name, side === -1 ? 'start' : 'end');
       else label(X(8), y + dy * 21, name, side === -1 ? 'end' : 'start');
-      content.push('</g>');
+      endDevice();
     };
     const resistor = (name, x1, y1, x2, y2, description, nodes, labelSide = 'right') => {
       addDevice(name, description, 'resistor', nodes);
@@ -114,7 +130,7 @@
       wire(points);
       if (dx === 0) label(x1 + (labelSide === 'left' ? -10 : 10), (y1 + y2) / 2, name, labelSide === 'left' ? 'end' : 'start');
       else textScreen((x1 + x2) / 2, Y(y1) - 17, name, 'middle');
-      content.push('</g>');
+      endDevice();
     };
     const capacitorBetween = (name, x1, y, x2, description, nodes) => {
       addDevice(name, description, 'capacitor', nodes);
@@ -124,7 +140,7 @@
       lineScreen([[middle - 3, Y(y) - 9], [middle - 3, Y(y) + 9]], colors.device, undefined, 2);
       lineScreen([[middle + 3, Y(y) - 9], [middle + 3, Y(y) + 9]], colors.device, undefined, 2);
       textScreen(middle, Y(y) - 21, name, 'middle');
-      content.push('</g>');
+      endDevice();
     };
     // Shunt capacitors always hang toward the bottom of the screen so the ground symbol stays upright.
     const shuntCap = (name, x, y, description, net, labelSide = 'right') => {
@@ -136,7 +152,7 @@
       lineScreen([[x, start + 18], [x, start + 28]]);
       [8, 5, 2].forEach((half, i) => lineScreen([[x - half, start + 28 + i * 4], [x + half, start + 28 + i * 4]], colors.wire, undefined, 1.6));
       textScreen(x + (labelSide === 'right' ? 12 : -12), start + 15, name, labelSide === 'right' ? 'start' : 'end');
-      content.push('</g>');
+      endDevice();
     };
     const currentSource = (name, x, y1, description, net, labelSide = 'right') => {
       addDevice(name, description, 'current-source', { p: net, n: 'VSS' });
@@ -147,7 +163,7 @@
       lineScreen([[x, cy - 5], [x, cy + 5]], colors.device);
       lineScreen([[x - 3, cy + 2], [x, cy + 5], [x + 3, cy + 2]], colors.device);
       textScreen(x + (labelSide === 'right' ? 14 : -14), cy, name, labelSide === 'right' ? 'start' : 'end');
-      content.push('</g>');
+      endDevice();
     };
     // Source leg from the MOS lead end y to y + 48, optionally through RS.
     const sourceLeg = (x, y, name, tail = 'VSS', labelSide = 'right') => {
@@ -339,11 +355,12 @@
     }
 
     const title = (mirror ? 'PMOS' : 'NMOS') + ' input · ' + titles[type];
-    const caption = 'All bias ports and supplies are AC ground. All capacitor ground symbols denote AC ground. CL / CX are lumped small-signal capacitances; ideal bias and body-effect assumptions apply.';
+    const caption = 'All bias ports and supplies are AC ground. All capacitor ground symbols denote AC ground. CL / CX are lumped small-signal capacitances; ideal bias and body-effect assumptions apply. On the page, hovering a wire, junction or terminal highlights its net.';
     const svg = '<svg ' + attr({ xmlns: 'http://www.w3.org/2000/svg', width, height, viewBox: '0 0 ' + width + ' ' + height, role: 'img', 'aria-label': title, 'font-family': FONT }) + '>'
-      + '<title>' + escape(title) + '</title><desc>' + escape(caption) + '</desc>'
+      + '<desc>' + escape(caption) + '</desc>'
       + tag('rect', { width, height, fill: colors.bg })
       + content.join('')
+      + hitAreas.join('')
       + '</svg>';
     return { svg, width, height, devices };
   }

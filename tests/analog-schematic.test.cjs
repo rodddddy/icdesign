@@ -259,6 +259,8 @@ function geometryOf({ svg, devices }) {
       if (name) assert.ok(groups.has(name), `${name}: SVG device has metadata`);
       stack.push(name ? groups.get(name) : stack.at(-1));
     } else {
+      // Transparent hover twins duplicate a visible wire; count each route once.
+      if (tag.includes('data-hit=')) continue;
       const line = { points: pointsOf(tag), net: normalizeNet(tag.match(/\bdata-net="([^"]+)"/)?.[1]) };
       lines.push(line);
       if (stack.at(-1)) stack.at(-1).lines.push(line);
@@ -654,6 +656,29 @@ test('schematic labels use one italic bold sans font without prose', () => {
         assert.match(attributes, /\bfont-weight="600"/);
         assert.ok(body.replace(/<[^>]+>/g, '').length <= 4, `short identifier, not prose: ${body}`);
       }
+    }
+  }
+});
+
+test('screen view exposes widened hover areas for every routed net', () => {
+  for (const raw of rawCases) {
+    const config = describe(raw).config;
+    const screen = render(config);
+    const exported = render(config, true);
+    assert.doesNotMatch(exported.svg, /data-hit=/, 'exports carry no interaction attributes');
+    const visible = new Set([...screen.svg.matchAll(/<polyline\b[^>]*>/g)]
+      .filter(([tag]) => !tag.includes('data-hit=') && /\bdata-net="/.test(tag))
+      .map(([tag]) => tag.match(/\bpoints="([^"]+)"/)[1] + '|' + tag.match(/\bdata-net="([^"]+)"/)[1]));
+    const hits = [...screen.svg.matchAll(/<polyline\b[^>]*\bdata-hit="([^"]+)"[^>]*>/g)];
+    assert.ok(hits.length > 0, 'routing wires expose a hit area');
+    for (const [tag, net] of hits) {
+      assert.match(tag, /\bstroke="transparent"/);
+      assert.match(tag, /\bstroke-width="10"/);
+      assert.ok(visible.has(tag.match(/\bpoints="([^"]+)"/)[1] + '|' + net),
+        `${net}: hit area overlays a visible net wire`);
+    }
+    for (const [tag] of screen.svg.matchAll(/<circle\b[^>]*\br="3"[^>]*>/g)) {
+      assert.match(tag, /\bdata-net="/, 'terminals belong to a net');
     }
   }
 });
